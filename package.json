@@ -1,0 +1,14 @@
+{
+  "name": "primordia",
+  "version": "0.1.0",
+  "description": "An island where creatures with tiny neural brains graze, hunt, breed and evolve.",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "npx --yes serve@14.2.4 .",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
