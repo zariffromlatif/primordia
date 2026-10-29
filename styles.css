@@ -93,3 +93,16 @@ h3{font-size:.95rem;font-weight:700;margin:18px 0 8px;}
 .rec b{font-variant-numeric:tabular-nums;text-align:right;}
 .rec small{grid-column:1/-1;color:var(--muted);font-size:.8rem;}
 .rec small:empty{display:none;}
+.chip-notice{top:12px;bottom:auto;left:auto;right:12px;max-width:min(320px,calc(100% - 24px));border-radius:14px;}
+.stage.drop{outline:3px dashed var(--accent);outline-offset:-6px;}
+.tree-wrap{max-height:380px;overflow:auto;border:1px solid var(--line);border-radius:14px;background:var(--surface);}
+#tree{display:block;}
+#tree .tn{font-size:12px;fill:var(--ink);}
+#tree .ta{font-size:10.5px;fill:var(--muted);}
+#tree .tr.live{cursor:pointer;}
+#tree .tr.live:hover rect,#tree .tr.live:focus rect{fill:var(--line);}
+#tree .tr:focus{outline:none;}
+.block-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:8px;}
+.block-head h2{margin:0;}
+.toggle{display:inline-flex;align-items:center;gap:6px;font-size:.85rem;color:var(--muted);cursor:pointer;}
+.toggle input{accent-color:var(--accent);width:16px;height:16px;margin:0;}

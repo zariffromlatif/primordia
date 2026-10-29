@@ -14,11 +14,12 @@
 <div class="wrap">
   <section class="worldcol">
     <h1>Primordia</h1>
-    <p class="lede">An island where creatures with tiny neural brains graze, hunt, call to each other and split into new species. Nothing is scripted: every behavior you see was inherited.</p>
+    <p class="lede">An island where creatures with tiny neural brains graze, hunt, pair up, call to each other and split into new species, while rain carves rivers through the land. Nothing is scripted: every behavior you see was inherited.</p>
     <div class="stage">
       <canvas id="world" aria-label="Simulated island with evolving creatures"></canvas>
       <div class="chip" id="season">Year 1, spring</div>
       <div class="chip chip-top" id="toolhint" hidden></div>
+      <div class="chip chip-notice" id="notice" role="status" hidden></div>
     </div>
     <div class="tools" role="group" aria-label="What tapping the island does">
       <button data-tool="inspect" aria-pressed="true">Inspect</button>
@@ -31,8 +32,11 @@
       <button id="play" class="primary">Pause</button>
       <button id="speed">Speed 1×</button>
       <button id="reset">New island</button>
+      <button id="save">Save</button>
+      <button id="load">Load</button>
+      <input type="file" id="load-file" accept=".json,application/json" hidden>
     </div>
-    <p class="hint">Circles graze, triangles hunt anything smaller than themselves, a yellow halo means a creature is calling, and a purple core means it’s sick. <span id="seedline"></span></p>
+    <p class="hint">Circles graze, triangles hunt anything smaller than themselves, a yellow halo means a creature is calling, and a purple core means it’s sick. Pale clouds are storms; the rain they drop runs off into rivers and lakes. <span id="seedline"></span></p>
   </section>
 
   <section class="panel">
@@ -52,6 +56,12 @@
     <div class="block insp" id="inspector"></div>
 
     <div class="block">
+      <div class="block-head"><h2>Family tree</h2><label class="toggle"><input type="checkbox" id="tree-extinct"> Show extinct species</label></div>
+      <div class="tree-wrap" id="tree-wrap"><svg id="tree" role="group" aria-label="Family tree of species splits over time"></svg></div>
+      <p class="muted small chart-note" id="tree-note"></p>
+    </div>
+
+    <div class="block">
       <h2>Living species</h2>
       <ol id="species"></ol>
       <p class="muted small extinct" id="extinct"></p>
@@ -69,6 +79,7 @@
   </section>
 </div>
 <script src="src/sim.js"></script>
+<script src="src/host.js"></script>
 <script src="src/ui.js"></script>
 </body>
 </html>

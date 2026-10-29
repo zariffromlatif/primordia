@@ -100,3 +100,151 @@ test("dropped hunters form their own new species", () => {
   assert.equal(w.nCarn, 3);
   assert.equal(w.spCounts.get(sp.id), 3);
 });
+
+/* ---------- determinism and snapshots ---------- */
+
+const snap = w => JSON.stringify(sim.serialize(w));
+
+test("a seed replays exactly the same history", () => {
+  const a = sim.makeWorld(11), b = sim.makeWorld(11);
+  for (let i = 0; i < 3000; i++) { sim.step(a); sim.step(b); }
+  assert.ok(a.births > 0);
+  assert.ok(snap(a) === snap(b), "two runs of island 11 diverged");
+});
+
+test("a loaded snapshot carries on exactly as the saved island would have", () => {
+  const a = sim.makeWorld(12);
+  for (let i = 0; i < 2500; i++) sim.step(a);
+  sim.meteor(a, sim.W / 2, sim.W / 2);
+  const b = sim.deserialize(JSON.parse(snap(a)));
+  assert.equal(b.tick, a.tick);
+  assert.equal(b.creatures.length, a.creatures.length);
+  assert.ok(snap(a) === snap(b), "the loaded island differs from the saved one");
+  for (let i = 0; i < 2500; i++) { sim.step(a); sim.step(b); }
+  assert.ok(snap(a) === snap(b), "the loaded island's history diverged");
+});
+
+test("loading refuses files that aren't saved islands", () => {
+  assert.throws(() => sim.deserialize({ hello: "world" }), /not a saved Primordia island/);
+  const o = sim.serialize(sim.makeWorld(1));
+  assert.throws(() => sim.deserialize({ ...o, version: 999 }), /format 999/);
+  assert.throws(() => sim.deserialize({ ...o, height: "AAAA" }), /damaged/);
+});
+
+/* ---------- reproduction ---------- */
+
+test("a child of two parents inherits whole neurons from each", () => {
+  const w = sim.makeWorld(13);
+  const [p, q] = alive(w);
+  for (const [c, v] of [[p, 1], [q, -1]]) { c.w1.fill(v); c.b1.fill(v); c.w2.fill(v); c.g.mut = 0; }
+  const fromP = new Set();
+  for (let n = 0; n < 20; n++) {
+    const ch = sim.makeChild(w, p, q);
+    assert.equal(ch.mateId, q.id);
+    assert.equal(ch.gen, Math.max(p.gen, q.gen) + 1);
+    for (let h = 0; h < sim.NH; h++) {
+      const v = ch.b1[h];
+      for (let i = 0; i < sim.NI; i++) assert.equal(ch.w1[h * sim.NI + i], v, "a neuron's inputs come from one parent");
+      for (let o = 0; o < sim.NO; o++) assert.equal(ch.w2[o * sim.NH + h], v, "a neuron's outputs come from the same parent");
+      fromP.add(v);
+    }
+  }
+  assert.deepEqual([...fromP].sort(), [-1, 1], "both parents contributed neurons");
+});
+
+test("creatures mostly breed in pairs once the island fills up", () => {
+  const w = sim.makeWorld(14);
+  for (let i = 0; i < 3000; i++) sim.step(w);
+  assert.ok(w.pairBirths > 0);
+  assert.ok(w.pairBirths / w.births > 0.3, `only ${w.pairBirths} of ${w.births} births had two parents`);
+});
+
+test("a creature with no mate in reach buds on its own", () => {
+  const w = sim.makeWorld(15);
+  const c = alive(w)[0];
+  w.creatures = [c];
+  c.age = 200; c.e = c.maxE;
+  for (let i = 0; i < 280; i++) sim.step(w);
+  assert.ok(w.births >= 1, "the lone creature reproduced");
+  assert.equal(w.pairBirths, 0);
+});
+
+/* ---------- body plans ---------- */
+
+test("a creature only sees through the eyes it has", () => {
+  const w = sim.makeWorld(16);
+  for (const c of w.creatures) c.g.eyes = 2;
+  for (let i = 0; i < 5; i++) sim.step(w);
+  for (const c of alive(w)) {
+    if (c.g.eyes !== 2) continue;
+    for (let i = 6; i < sim.IE; i++) assert.equal(c.inp[i], 0, `input ${i} of a two-eyed creature`);
+  }
+});
+
+test("eye count and field of view evolve within their limits", () => {
+  const w = sim.makeWorld(17);
+  let c = w.creatures[0];
+  const seen = new Set();
+  for (let i = 0; i < 2000; i++) {
+    c.g.mut = 0.4; c = sim.makeChild(w, c);
+    assert.ok(Number.isInteger(c.g.eyes) && c.g.eyes >= 1 && c.g.eyes <= sim.MAX_EYES);
+    assert.ok(c.g.fov >= 0.5 && c.g.fov <= 6 && c.g.sense <= 220);
+    seen.add(c.g.eyes);
+  }
+  assert.ok(seen.size >= 3, `eye counts seen: ${[...seen]}`);
+});
+
+/* ---------- water ---------- */
+
+test("every land cell drains to the sea", () => {
+  const w = sim.makeWorld(18);
+  const N = sim.G * sim.G;
+  for (let k = 0; k < N; k++) {
+    let at = k, n = 0;
+    while (w.down[at] >= 0 && n < N) { at = w.down[at]; n++; }
+    assert.ok(n < N, `cell ${k} drains in a loop`);
+    const i = at % sim.G, j = Math.floor(at / sim.G);
+    assert.ok(w.height[at] < sim.SEA || i === 0 || j === 0 || i === sim.G - 1 || j === sim.G - 1, `cell ${k} drains into a dead end`);
+  }
+});
+
+test("rivers run, and over time they wear the land down and build it up at the coast", () => {
+  const w = sim.makeWorld(19);
+  const rivers = () => w.water.filter(v => v > 0 && v < 255).length;
+  assert.ok(rivers() > 50, `only ${rivers()} river cells`);
+  const before = Float32Array.from(w.height);
+  for (let i = 0; i < 4000; i++) sim.step(w);
+  assert.ok(rivers() > 50, "rivers are still running");
+  let cut = 0, built = 0;
+  for (let k = 0; k < before.length; k++) {
+    if (w.height[k] < before[k] - 1e-4) cut++;
+    if (before[k] < sim.SEA && w.height[k] > before[k] + 1e-4) built++;
+  }
+  assert.ok(cut > 20, `${cut} cells were eroded`);
+  assert.ok(built > 0, `${built} sea cells gained sediment`);
+});
+
+test("a meteor crater on flat ground fills into a lake", () => {
+  const w = sim.makeWorld(20);
+  const cx = sim.W / 2, cy = sim.W / 2, R = 20;
+  for (let j = 0; j < sim.G; j++) for (let i = 0; i < sim.G; i++) {
+    if (Math.hypot(i - cx / sim.CELL, j - cy / sim.CELL) < R) w.height[j * sim.G + i] = 0.5;
+  }
+  sim.reshape(w);
+  assert.ok(!sim.isLake(w, sim.cellOf(cx, cy)));
+  sim.meteor(w, cx, cy);
+  assert.ok(sim.isLake(w, sim.cellOf(cx, cy)), "the crater holds water");
+  assert.equal(w.water[sim.cellOf(cx, cy)], 255);
+});
+
+test("bringing rain also brings a storm that soaks the ground", () => {
+  const w = sim.makeWorld(21);
+  let land = 0;
+  while (w.terr[land] !== sim.GRASS) land++;
+  const x = (land % sim.G + 0.5) * sim.CELL, y = (Math.floor(land / sim.G) + 0.5) * sim.CELL;
+  w.moist[land] = 0;
+  const storms = w.storms.length;
+  sim.rain(w, x, y);
+  assert.equal(w.storms.length, storms + 1);
+  assert.equal(w.moist[land], 1);
+});
