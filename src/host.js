@@ -5,12 +5,13 @@
  * available, for example when index.html is opened straight from disk, the page runs it itself.
  * Depends on globals from src/sim.js.
  *
- * Page to host:  new {seed}, load {text}, frame {run, speed, budget}, tool {tool, x, y},
+ * Page to host:  new {seed}, load {text}, frame {run, speed, budget}, tool {tool, x, y} (inspect-free tools: feed, rain,
+ *                hunters, meteor, plague),
  *                select {id}, save
  * Host to page:  world {seed, tick, loaded}, frame {...}, snapshot {text, name}, error {message}
  *                (a frame carries missing {id} when a selected creature was already gone)
  */
-const STRIDE=11; // floats per creature in a frame: id, x, y, angle, radius, hue, diet, call, sick, eyes, field of view
+const STRIDE=13; // floats per creature in a frame: id, x, y, angle, radius, hue, diet, call A, call B, sick, eyes, field of view, ornament on show
 
 function makeHost(send){
   let w=null,sel=null,missing=0,frames=0,sent=null;
@@ -25,9 +26,11 @@ function makeHost(send){
   function detail(c){
     const sp=w.species.get(c.sp);
     return{id:c.id,x:c.x,y:c.y,a:c.a,r:c.r,dead:c.dead,cause:c.cause,name:sp?sp.name:"Unknown",hue:sp?sp.hue:0,
-      gen:c.gen,e:c.e,maxE:c.maxE,age:c.age,kids:c.kids,kills:c.kills,sick:c.sick,immune:c.immune,sig:c.sig,v:c.v,
+      gen:c.gen,e:c.e,maxE:c.maxE,age:c.age,kids:c.kids,kills:c.kills,mates:c.mates,sick:c.sick,immune:c.immune,sigA:c.sigA,sigB:c.sigB,v:c.v,
       parentId:c.parentId,mateId:c.mateId,g:Object.assign({},c.g),
-      inp:c.inp.slice(),hid:c.hid.slice(),out:c.out.slice(),w1:c.w1.slice(),w2:c.w2.slice()};
+      val:Array.from(c.val),surprise:c.surprise,fear:c.fear,mood:c.mood,pred:c.pred,poisoned:c.poisoned,fed:c.fed,
+      // the danger predictor's wiring is learned, so the diagram shows what it has become
+      inp:c.inp.slice(),hid:c.hid.slice(),out:c.out.slice(),w1:c.w1.slice(),w2:(()=>{const a=c.w2.slice();a.set(c.pw,5*NH);return a;})()};
   }
 
   /* The slower-changing panels: species, the family tree, records and the chart's history. */
@@ -38,7 +41,9 @@ function makeHost(send){
     for(const s of w.species.values())species.push({id:s.id,name:s.name,hue:s.hue,diet:s.diet,born:s.born,died:s.died,
       parentId:s.parentId,parentName:s.parentName,announced:s.announced,extinct:s.extinct,peak:s.peak,
       n:w.spCounts.get(s.id)||0,rep:rep.has(s.id)?rep.get(s.id).id:0});
-    return{species,history:w.history,records:w.records,pairs:pairShare(w,40)};
+    return{species,history:w.history,records:w.records,pairs:pairShare(w,40),
+      minds:{calls:w.calls,history:w.mindHistory,learnStart:w.learnStart,know:w.know},
+      darwin:{selection:w.selection,struggle:w.struggle}};
   }
 
   function frame(m){
@@ -53,16 +58,17 @@ function makeHost(send){
       if(c.dead)continue;
       const sp=w.species.get(c.sp);
       cr[o]=c.id;cr[o+1]=c.x;cr[o+2]=c.y;cr[o+3]=c.a;cr[o+4]=c.r;cr[o+5]=sp?sp.hue:0;
-      cr[o+6]=c.g.diet;cr[o+7]=c.sig;cr[o+8]=c.sick?1:0;cr[o+9]=c.g.eyes;cr[o+10]=c.g.fov;o+=STRIDE;
+      cr[o+6]=c.g.diet;cr[o+7]=c.sigA;cr[o+8]=c.sigB;cr[o+9]=c.sick?1:0;cr[o+10]=c.g.eyes;cr[o+11]=c.g.fov;
+      cr[o+12]=c.g.orn*clamp(c.e/c.maxE,0,1);o+=STRIDE;
     }
     const plant=w.plant.slice(),transfer=[cr.buffer,plant.buffer];
-    const f={type:"frame",tick:w.tick,season:w.season,climate:w.climate?{kind:w.climate.kind,label:w.climate.label}:null,
+    const f={type:"frame",tick:w.tick,season:w.season,toxic:w.toxic,climate:w.climate?{kind:w.climate.kind,label:w.climate.label}:null,
       cr,plant,storms:w.storms.map(s=>({x:s.x,y:s.y,r:s.r,p:s.p*Math.sin(Math.PI*s.age/s.life)})),
       flashes:w.flashes.splice(0),stats:{herb:w.nHerb,carn:w.nCarn,species:w.spCounts.size,gen:w.maxGen}};
     if(w.terrVer!==sent.terr){
       sent.terr=w.terrVer;
-      f.terrain={terr:w.terr.slice(),shade:w.shade.slice(),down:w.down.slice()};
-      transfer.push(f.terrain.terr.buffer,f.terrain.shade.buffer,f.terrain.down.buffer);
+      f.terrain={terr:w.terr.slice(),shade:w.shade.slice(),down:w.down.slice(),ptype:w.ptype.slice()};
+      transfer.push(f.terrain.terr.buffer,f.terrain.shade.buffer,f.terrain.down.buffer,f.terrain.ptype.buffer);
     }
     if(w.hydroVer!==sent.hydro){
       sent.hydro=w.hydroVer;
@@ -91,7 +97,8 @@ function makeHost(send){
         case "tool":{
           if(!w)break;
           const {x,y}=m;
-          if(m.tool==="rain")rain(w,x,y);
+          if(m.tool==="feed")feedCreature(w,x,y);
+          else if(m.tool==="rain")rain(w,x,y);
           else if(m.tool==="hunters")dropHunters(w,x,y);
           else if(m.tool==="meteor")meteor(w,x,y);
           else if(m.tool==="plague")startPlague(w,x,y);

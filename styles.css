@@ -106,3 +106,19 @@ h3{font-size:.95rem;font-weight:700;margin:18px 0 8px;}
 .block-head h2{margin:0;}
 .toggle{display:inline-flex;align-items:center;gap:6px;font-size:.85rem;color:var(--muted);cursor:pointer;}
 .toggle input{accent-color:var(--accent);width:16px;height:16px;margin:0;}
+.chip-poison{left:auto;right:12px;display:flex;align-items:center;gap:6px;}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:0;}
+.chip .dot{margin-right:0;}
+.dot.gold{background:#C9B23C;}
+.dot.blue{background:#3E9C8C;}
+.dot.calla{background:#FFE26E;box-shadow:inset 0 0 0 1px rgba(0,0,0,.2);}
+.dot.callb{background:#78DCFF;box-shadow:inset 0 0 0 1px rgba(0,0,0,.2);}
+.words{margin:0 0 6px;font-size:1rem;line-height:1.45;}
+.attn{margin-bottom:10px;}
+.bar.mid{position:relative;}
+.bar.mid::after{content:"";position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:var(--muted);}
+.bar.mid i{position:absolute;top:0;}
+#mindchart{display:block;width:100%;height:70px;margin-top:8px;}
+.struggle{margin:6px 0 12px;font-size:.92rem;}
+.struggle b{font-size:1.15rem;font-variant-numeric:tabular-nums;}
+.sel em{min-width:5.5ch;}

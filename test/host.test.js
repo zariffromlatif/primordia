@@ -77,3 +77,31 @@ test("a bad file is reported, and the current island keeps running", () => {
   assert.match(err.message, /not a saved Primordia island/);
   assert.equal(ask({ type: "frame", run: true, speed: 1 })[0].tick, 1);
 });
+
+test("frames carry both calls, ornaments, the poison and the mind and selection panels", () => {
+  const { ask } = open();
+  ask({ type: "new", seed: 36 });
+  const [f] = ask({ type: "frame", run: true, speed: 30, budget: 1e9 });
+  assert.ok(f.toxic === 0 || f.toxic === 1);
+  assert.equal(f.terrain.ptype.length, sim.G * sim.G);
+  for (let i = 0; i < f.cr.length; i += STRIDE) {
+    assert.ok(f.cr[i + 7] >= 0 && f.cr[i + 8] >= 0, "call A and call B");
+    assert.ok(f.cr[i + 12] >= 0 && f.cr[i + 12] <= 1, "ornament on show");
+  }
+  assert.ok(Array.isArray(f.panels.minds.calls) && "darwin" in f.panels);
+  const id = f.cr[0];
+  ask({ type: "select", id });
+  const [g] = ask({ type: "frame", run: true, speed: 1 });
+  assert.equal(g.sel.val.length, 2);
+  assert.equal(g.sel.w2.length, sim.NO * sim.NH);
+});
+
+test("the feed tool fills a creature's energy", () => {
+  const { ask } = open();
+  ask({ type: "new", seed: 37 });
+  const [f] = ask({ type: "frame", run: true, speed: 1 });
+  ask({ type: "tool", tool: "feed", x: f.cr[1], y: f.cr[2] });
+  const [g] = ask({ type: "frame", run: false });
+  assert.equal(g.flashes[0].kind, "feed");
+  assert.ok(g.events.some(e => e.text.includes("artificial selection")));
+});

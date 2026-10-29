@@ -7,8 +7,8 @@ const $=s=>document.querySelector(s);
 const dpr=Math.min(window.devicePixelRatio||1,2.5);
 const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
 const SPEEDS=[1,4,12,40];
-const TOOL_HINTS={rain:"Tap the island to bring rain",hunters:"Tap the island to drop three hunters",meteor:"Tap the island to aim a meteor",plague:"Tap a crowd to start a plague"};
-const FLASH={meteor:[255,160,60],rain:[90,170,255],plague:[180,120,255],hunters:[255,90,80]};
+const TOOL_HINTS={feed:"Tap a creature to feed it so it breeds sooner",rain:"Tap the island to bring rain",hunters:"Tap the island to drop three hunters",meteor:"Tap the island to aim a meteor",plague:"Tap a crowd to start a plague"};
+const FLASH={feed:[110,220,120],meteor:[255,160,60],rain:[90,170,255],plague:[180,120,255],hunters:[255,90,80]};
 
 /* ---------- state from the simulation ---------- */
 let F=null;          // latest frame: creatures, plants, weather, stats, the selected creature
@@ -53,7 +53,7 @@ function receive(m){
   if(m.type==="frame"){pending=false;takeFrame(m);}
   else if(m.type==="world"){
     seed=m.seed;writeHash();
-    F=null;terrain=null;hydro=null;panelData=null;events=[];flashes=[];
+    F=null;terrain=null;hydro=null;panelData=null;events=[];flashes=[];lastToxic=-1;
     selectedId=0;follow=false;buildInspector();
     cam.x=W/2;cam.y=W/2;cam.z=1;
     updateSeedLine();syncPlay();
@@ -71,7 +71,7 @@ function takeFrame(m){
   for(const f of m.flashes)flashes.push(f);
   F=m;
   if(m.missing&&m.missing===selectedId){select(0);notice("That creature had already died.");}
-  if(m.panels){updateSpecies();updateRecords();maybeDrawTree();}
+  if(m.panels){updateSpecies();updateRecords();updateDarwin();updateMinds();maybeDrawTree();}
 }
 
 /* ---------- canvases and colors ---------- */
@@ -80,7 +80,9 @@ const off=document.createElement("canvas");off.width=G;off.height=G;
 const octx=off.getContext("2d"),img=octx.createImageData(G,G);
 const chartC=$("#chart"),cctx=chartC.getContext("2d");
 const BASE=[[34,66,112],[62,108,156],[222,206,160],[176,150,104],[124,106,76],[146,144,138]];
-const FULL=[[34,66,112],[58,128,128],[176,184,112],[94,152,72],[42,102,58],[124,134,112]];
+const FULL=[ // plant colour per terrain, for gold plants (0) and blue plants (1)
+  [[34,66,112],[58,128,128],[190,184,96],[150,160,58],[96,112,40],[140,138,104]],
+  [[34,66,112],[58,128,128],[150,184,150],[62,146,124],[30,92,88],[112,134,124]]];
 const LAKE_RGB=[56,108,158],ICE_RGB=[214,228,238],DRY_RGB=[214,176,120];
 
 let colors={};
@@ -109,7 +111,7 @@ function view(){const vw=W/cam.z;return{vw,ox:clamp(cam.x-vw/2,0,W-vw),oy:clamp(
 
 /* ---------- world rendering ---------- */
 function paintGround(){
-  const d=img.data,P=F.plant,T=terrain.terr,S=terrain.shade,Wt=hydro?hydro.water:null,M=hydro?hydro.moist:null;
+  const d=img.data,P=F.plant,T=terrain.terr,S=terrain.shade,PT=terrain.ptype,Wt=hydro?hydro.water:null,M=hydro?hydro.moist:null;
   const freeze=F.climate&&F.climate.kind==="freeze",winter=(1-F.season)*0.24+(freeze?0.25:0);
   for(let q=0;q<G*G;q++){
     const t=T[q],sh=S[q];let r,g,bl;
@@ -117,7 +119,7 @@ function paintGround(){
       const ice=freeze?0.65:winter*0.3;
       r=LAKE_RGB[0]+(ICE_RGB[0]-LAKE_RGB[0])*ice;g=LAKE_RGB[1]+(ICE_RGB[1]-LAKE_RGB[1])*ice;bl=LAKE_RGB[2]+(ICE_RGB[2]-LAKE_RGB[2])*ice;
     }else{
-      const b=BASE[t],f=FULL[t],m=Math.min(1,Math.sqrt(P[q])*1.1);
+      const b=BASE[t],f=FULL[PT?PT[q]:0][t],m=Math.min(1,Math.sqrt(P[q])*1.1);
       r=(b[0]+(f[0]-b[0])*m)*sh;g=(b[1]+(f[1]-b[1])*m)*sh;bl=(b[2]+(f[2]-b[2])*m)*sh;
       if(t>=SAND){
         const dry=M?Math.max(0,0.3-M[q]/255)*0.9:0;
@@ -177,6 +179,7 @@ function drawStorms(V,k){
   }
 }
 
+let lastToxic=-1;
 function drawWorld(){
   const cw=wc.width,ch=wc.height;
   if(!F||!terrain){ctx.fillStyle="#24456F";ctx.fillRect(0,0,cw,ch);return;}
@@ -191,10 +194,23 @@ function drawWorld(){
   for(let i=0;i<cr.length;i+=STRIDE){
     const x=(cr[i+1]-V.ox)*k,y=(cr[i+2]-V.oy)*k;
     if(x<-pad||y<-pad||x>cw+pad||y>ch+pad)continue;
-    const a=cr[i+3],r=Math.max(cr[i+4]*k*grow,minR),hue=cr[i+5],hunt=cr[i+6]>0.5,sig=cr[i+7];
-    if(sig>0.2){
+    const a=cr[i+3],r=Math.max(cr[i+4]*k*grow,minR),hue=cr[i+5],hunt=cr[i+6]>0.5,sigA=cr[i+7],sigB=cr[i+8],show=cr[i+12];
+    if(sigA>0.3){
       ctx.beginPath();ctx.arc(x,y,r+4*dpr,0,Math.PI*2);
-      ctx.strokeStyle=`rgba(255,236,150,${Math.min(0.9,sig).toFixed(2)})`;ctx.lineWidth=2.2*dpr;ctx.stroke();
+      ctx.strokeStyle=`rgba(255,226,110,${Math.min(0.9,sigA).toFixed(2)})`;ctx.lineWidth=2.2*dpr;ctx.stroke();
+    }
+    if(sigB>0.3){
+      ctx.beginPath();ctx.arc(x,y,r+7*dpr,0,Math.PI*2);
+      ctx.strokeStyle=`rgba(120,220,255,${Math.min(0.9,sigB).toFixed(2)})`;ctx.lineWidth=2.2*dpr;ctx.stroke();
+    }
+    if(show>0.08){ // an ornament: a fan-shaped tail that shines brighter on a well-fed body
+      const L=r*(0.9+2.4*show),b=a+Math.PI,fan=0.35+0.45*show;
+      ctx.beginPath();ctx.moveTo(x+Math.cos(b)*r*0.6,y+Math.sin(b)*r*0.6);
+      ctx.lineTo(x+Math.cos(b-fan)*L,y+Math.sin(b-fan)*L);
+      ctx.quadraticCurveTo(x+Math.cos(b)*L*1.15,y+Math.sin(b)*L*1.15,x+Math.cos(b+fan)*L,y+Math.sin(b+fan)*L);
+      ctx.closePath();
+      ctx.fillStyle=`hsla(${(hue+40)|0} 90% 72% / ${(0.5+0.5*show).toFixed(2)})`;ctx.fill();
+      ctx.lineWidth=Math.max(1,0.7*dpr);ctx.strokeStyle="rgba(20,20,20,.35)";ctx.stroke();
     }
     ctx.lineWidth=Math.max(1,0.9*dpr);
     ctx.beginPath();
@@ -210,12 +226,12 @@ function drawWorld(){
       ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+Math.cos(a)*r,y+Math.sin(a)*r);ctx.stroke();
     }
     if(r>=9*dpr){ // eyes, once a creature is drawn big enough to see them
-      const ne=cr[i+9],fov=cr[i+10],er=Math.max(1,r*0.14);
+      const ne=cr[i+10],fov=cr[i+11],er=Math.max(1,r*0.14);
       ctx.fillStyle="rgba(10,14,20,.85)";ctx.beginPath();
       for(let e=0;e<ne;e++){const an=a-fov/2+(e+0.5)*fov/ne,ex=x+Math.cos(an)*r*0.72,ey=y+Math.sin(an)*r*0.72;ctx.moveTo(ex+er,ey);ctx.arc(ex,ey,er,0,Math.PI*2);}
       ctx.fill();
     }
-    if(cr[i+8]){ctx.beginPath();ctx.arc(x,y,Math.max(1.6*dpr,r*0.45),0,Math.PI*2);ctx.fillStyle="#9B5CFF";ctx.fill();}
+    if(cr[i+9]){ctx.beginPath();ctx.arc(x,y,Math.max(1.6*dpr,r*0.45),0,Math.PI*2);ctx.fillStyle="#9B5CFF";ctx.fill();}
   }
   const s=F.sel&&F.sel.id===selectedId?F.sel:null;
   if(s){
@@ -245,6 +261,7 @@ function drawWorld(){
   }
   const t=F.tick;
   $("#season").textContent=`Year ${yearOf(t)}, ${SEASONS[seasonOf(t)]}${F.climate?", "+F.climate.label:""}`;
+  if(lastToxic!==F.toxic){lastToxic=F.toxic;const n=PLANT_NAMES[F.toxic];$("#poison").innerHTML=`<span class="dot ${n}"></span>${n[0].toUpperCase()+n.slice(1)} plants are poisonous`;}
 }
 
 /* ---------- chart: one band per species ---------- */
@@ -335,7 +352,7 @@ function drawTree(){
   el.innerHTML=rows.length?svg:"";
   if(focused){const g=el.querySelector(`[data-sid="${focused}"][tabindex]`);if(g)g.focus({preventScroll:true});}
   const pr=panelData.pairs;
-  $("#tree-note").textContent=(rows.length?`Each line is a species, from the day it split off to ${showExtinct?"today or to its extinction":"today, with the extinct ancestors it came from"}. Tap a living one to inspect a member. `:"")+(pr>=0?`${Math.round(pr*100)}% of recent births had two parents.`:"");
+  $("#tree-note").textContent=(rows.length?`Each line is a species, from the day it split off to ${showExtinct?"today or to its extinction":"today, with the extinct ancestors it came from"}. Tap a living one to inspect a member. `:"")+(pr>=0?`${Math.round(pr*100)}% of recent births had two parents. `:"")+"The only illustration in Darwin’s On the Origin of Species was a tree like this.";
 }
 function treePick(e){const g=e.target.closest(".tr.live");if(!g)return;const id=+g.dataset.rep;if(id)select(id);}
 $("#tree").addEventListener("click",treePick);
@@ -351,15 +368,25 @@ const GENES=[
   {k:"fov",label:"Field of view",min:0.5,max:6,fmt:v=>Math.round(v*180/Math.PI)+"°"},
   {k:"sense",label:"Sight range",min:20,max:220,fmt:v=>Math.round(v)+""},
   {k:"diet",label:"Meat in diet",min:0,max:1,fmt:v=>Math.round(v*100)+"%"},
-  {k:"mut",label:"Mutation rate",min:0.01,max:0.4,fmt:v=>(v*100).toFixed(1)+"%"}
+  {k:"mut",label:"Mutation rate",min:0.01,max:0.4,fmt:v=>(v*100).toFixed(1)+"%"},
+  {k:"learn",label:"Learning rate",min:0,max:0.06,fmt:v=>(v*100).toFixed(2)+"%"},
+  {k:"taste",label:"Born liking",min:-1,max:1,fmt:v=>v>0.1?"gold":v<-0.1?"blue":"neither"},
+  {k:"orn",label:"Ornament",min:0,max:1,fmt:v=>Math.round(v*100)+"%"},
+  {k:"pref",label:"Likes in a mate",min:-1,max:1,fmt:v=>v>0.15?"showy":v<-0.15?"plain":"no preference"}
+];
+const FEELINGS=[
+  {k:"hunger",label:"Hunger",f:c=>clamp(1-c.e/c.maxE,0,1)},
+  {k:"fear",label:"Fear",f:c=>clamp(c.fear,0,1)},
+  {k:"surprise",label:"Surprise",f:c=>clamp(c.surprise*2,0,1)},
+  {k:"mood",label:"Mood",f:c=>clamp(0.5+c.mood*6,0,1),fmt:c=>c.mood>0.02?"good":c.mood<-0.02?"bad":"even"}
 ];
 const EYE_NAMES=[[],["ahead"],["left","right"],["left","ahead","right"],["far left","left","right","far right"],
   ["far left","left","ahead","right","far right"],["far left","left","near left","near right","right","far right"]];
-const OUTPUT_LABELS=["Turn","Speed","Call","Memory"];
+const OUTPUT_LABELS=["Turn","Speed","Call A","Call B","Memory","Expects danger"];
 function brainRows(eyes){
   const rows=[];
-  for(let e=0;e<eyes;e++)for(let t=0;t<3;t++)rows.push({i:e*3+t,label:["Plants","Prey","Hunter"][t]+" "+EYE_NAMES[eyes][e]});
-  ["Energy","Water ahead","Pulse","Calls heard","Memory"].forEach((label,n)=>rows.push({i:IE+n,label}));
+  for(let e=0;e<eyes;e++)for(let t=0;t<3;t++)rows.push({i:e*3+t,label:["Food","Prey","Hunter"][t]+" "+EYE_NAMES[eyes][e]});
+  ["Energy","Water ahead","Pulse","Poisoned","Call A heard","Call B heard","Memory","Surprise"].forEach((label,n)=>rows.push({i:IE+n,label}));
   return rows;
 }
 const NUMBERS=["no","one","two","three","four","five","six"];
@@ -385,12 +412,19 @@ function buildInspector(){
   <div class="insp-actions"><button id="i-follow" aria-pressed="false">Follow</button><button class="ghost" id="i-close">Close</button></div>
   <p class="status" id="i-status"></p>
   <div class="meter"><span>Energy</span><div class="bar"><i id="i-energy"></i></div><em id="i-energy-v"></em></div>
-  <dl class="facts"><div><dt>Age</dt><dd id="i-age"></dd></div><div><dt>Children</dt><dd id="i-kids"></dd></div><div><dt>Kills</dt><dd id="i-kills"></dd></div><div><dt>Health</dt><dd id="i-health"></dd></div></dl>
+  <dl class="facts"><div><dt>Age</dt><dd id="i-age"></dd></div><div><dt>Children</dt><dd id="i-kids"></dd></div><div><dt id="i-kl">Kills</dt><dd id="i-kills"></dd></div><div><dt>Health</dt><dd id="i-health"></dd></div></dl>
+  <h3>Inner state</h3>
+  <p class="words" id="i-words"></p>
+  <p class="muted small attn">Most influential sense right now: <b id="i-focus"></b></p>
+  <div class="genes feel">${FEELINGS.map(f=>`<span>${f.label}</span><div class="bar"><i id="f-${f.k}"></i></div><em id="fv-${f.k}"></em>`).join("")}</div>
+  <div id="i-taste-wrap"${builtFor.hunt?" hidden":""}><h3>What it has learned</h3>
+  <div class="genes taste"><span><span class="dot gold"></span>Gold plants</span><div class="bar mid"><i id="t-0"></i></div><em id="tv-0"></em><span><span class="dot blue"></span>Blue plants</span><div class="bar mid"><i id="t-1"></i></div><em id="tv-1"></em></div></div>
+  <p class="muted small">These readouts translate numbers in its brain into words. They describe what it is doing, not what, if anything, it experiences.</p>
   <h3>Genes</h3>
   <div class="genes">${GENES.map(g=>`<span>${g.label}</span><div class="bar"><i id="g-${g.k}"></i></div><em id="gv-${g.k}"></em>`).join("")}</div>
   <h3>Brain</h3>
   <canvas id="brain" style="height:${rows*14+20}px" aria-label="Live diagram of this creature’s neural network"></canvas>
-  <p class="muted small">Its ${rows} senses, three for each of its ${NUMBERS[s.g.eyes]} ${s.g.eyes===1?"eye":"eyes"} plus five more, feed eight hidden neurons. They drive four outputs: turning, speed, a call that nearby creatures can hear, and a memory the brain reads back a moment later. Blue wiring excites, red inhibits, and brighter nodes are firing harder right now.</p>`;
+  <p class="muted small">Its ${rows} senses, three for each of its ${NUMBERS[s.g.eyes]} ${s.g.eyes===1?"eye":"eyes"} plus eight more, feed eight hidden neurons. Food is seen through what it has learned about it. Six outputs drive turning, speed, two calls that nearby creatures can hear, a memory the brain reads back a moment later, and a guess at how dangerous the next moment will be; the gap between that guess and reality is its surprise. Blue wiring excites, red inhibits, and brighter nodes are firing harder right now.</p>`;
   $("#i-close").onclick=()=>select(0);
   $("#i-follow").onclick=()=>{follow=!follow;syncFollow();};
   syncFollow();
@@ -404,10 +438,11 @@ function mood(c){
   if(c.dead)return`Died: ${c.cause.charAt(0).toLowerCase()+c.cause.slice(1)}, at ${(c.age/100).toFixed(1)} days old.`;
   let threat=0,prey=0,plants=0;
   for(let e=0;e<c.g.eyes;e++){plants=Math.max(plants,i[e*3]);prey=Math.max(prey,i[e*3+1]);threat=Math.max(threat,i[e*3+2]);}
-  if(threat>0.25)return c.sig>0.4?"Spotted a hunter and is calling out.":"Spotted a hunter nearby.";
+  if(threat>0.25)return c.sigA>0.4||c.sigB>0.4?"Spotted a hunter and is calling out.":"Spotted a hunter nearby.";
   if(c.sick)return"Sick with plague.";
+  if(c.poisoned)return"Sick from eating poisonous plants.";
   if(c.g.diet>0.5&&prey>0.2)return"Stalking prey.";
-  if(c.sig>0.5)return"Calling out.";
+  if(c.sigA>0.5||c.sigB>0.5)return`Making call ${c.sigA>=c.sigB?"A":"B"}.`;
   if(i[IE+1]>0.9)return"Facing deep water.";
   if(i[IE+1]>0.2)return"Wading into water.";
   if(c.e/c.maxE<0.25)return"Hungry and searching.";
@@ -415,6 +450,28 @@ function mood(c){
   return c.v<0.4?"Resting.":"Wandering.";
 }
 
+function plainWords(c){
+  if(c.dead)return"";
+  const i=c.inp,parts=[],names=EYE_NAMES[c.g.eyes];
+  let tm=0,te=0;for(let e=0;e<c.g.eyes;e++)if(i[e*3+2]>tm){tm=i[e*3+2];te=e;}
+  if(tm>0.45){const n=names[te];parts.push(`Sees a hunter ${n==="ahead"?"straight ahead":"to its "+n}.`);}
+  if(c.poisoned)parts.push("Feels sick from poison.");
+  const hunger=1-c.e/c.maxE;
+  if(hunger>0.75)parts.push("Starving.");else if(hunger>0.5)parts.push("Hungry.");
+  if(c.surprise>0.3)parts.push("Caught off guard.");
+  const calls=panelData&&panelData.minds?panelData.minds.calls:null;
+  [c.sigA,c.sigB].forEach((v,k)=>{if(v>0.4){const m=calls?calls[k].meaning:null;parts.push(`Making call ${CALL_NAMES[k]}${m==="danger"?", the alarm":m==="food"?", the food call":""}.`);}});
+  [i[IE+4],i[IE+5]].forEach((v,k)=>{if(v>0.3)parts.push(`Hears call ${CALL_NAMES[k]}.`);});
+  if(c.g.diet<=0.5){const d=c.val[0]-c.val[1];if(Math.abs(d)>0.4)parts.push(`Trusts ${d>0?"gold":"blue"} plants, avoids ${d>0?"blue":"gold"}.`);}
+  if(parts.length<4){if(c.mood>0.04)parts.push("Doing better than usual.");else if(c.mood<-0.04)parts.push("Doing worse than usual.");}
+  if(!parts.length)parts.push("Nothing much is going on.");
+  return parts.slice(0,4).join(" ");
+}
+function attention(c){
+  let best=null,bv=0;
+  for(const r of brainRows(c.g.eyes)){let s=0;for(let h=0;h<NH;h++)s+=Math.abs(c.w1[h*NI+r.i]);const v=Math.abs(c.inp[r.i])*s;if(v>bv){bv=v;best=r;}}
+  return bv<0.4||!best?"nothing stands out":best.label.toLowerCase();
+}
 function updateInspector(){
   if(!selectedId)return;
   const c=F&&F.sel&&F.sel.id===selectedId?F.sel:null;
@@ -432,7 +489,17 @@ function updateInspector(){
   $("#i-energy-v").textContent=Math.round(ef*100)+"%";
   $("#i-age").textContent=(c.age/100).toFixed(1)+" d";
   $("#i-kids").textContent=c.kids;
-  $("#i-kills").textContent=c.kills;
+  $("#i-kl").textContent=hunt?"Kills":"Mates";
+  $("#i-kills").textContent=hunt?c.kills:c.mates;
+  $("#i-words").textContent=c.dead?"":plainWords(c);
+  $("#i-focus").textContent=c.dead?"none":attention(c);
+  for(const f of FEELINGS){const v=c.dead?0:f.f(c);$("#f-"+f.k).style.width=(v*100).toFixed(1)+"%";$("#fv-"+f.k).textContent=c.dead?"":f.fmt?f.fmt(c):Math.round(v*100)+"%";}
+  for(let k=0;k<2;k++){
+    const v=c.val[k],bar=$("#t-"+k);if(!bar)break;
+    bar.style.left=(v<0?50+v*50:50)+"%";bar.style.width=(Math.abs(v)*50).toFixed(1)+"%";
+    bar.style.background=v<0?colors.carn:colors.herb;
+    $("#tv-"+k).textContent=v>0.3?"likes":v<-0.2?"avoids":"unsure";
+  }
   $("#i-health").textContent=c.sick?"Sick":c.immune?"Immune":"Healthy";
   for(const g of GENES){
     const v=c.g[g.k];
@@ -445,10 +512,10 @@ function drawBrain(){
   const cv=$("#brain"),c=F&&F.sel&&F.sel.id===selectedId?F.sel:null;if(!cv||!c)return;
   const bctx=cv.getContext("2d"),w=cv.width,h=cv.height,rows=brainRows(c.g.eyes),NR=rows.length;
   bctx.clearRect(0,0,w,h);
-  const padL=104*dpr,padR=64*dpr,top=8*dpr,bot=12*dpr;
+  const padL=104*dpr,padR=100*dpr,top=8*dpr,bot=12*dpr;
   const xI=padL,xO=w-padR,xH=(xI+xO)/2;
   const ys=(n,i)=>top+(h-top-bot)*(i+0.5)/n;
-  const yO=i=>h*0.2+h*0.6*(i+0.5)/NO;
+  const yO=i=>h*0.1+h*0.78*(i+0.5)/NO;
   const P=colors.posRgb,N=colors.negRgb;
   const edge=(x1,y1,x2,y2,wt,act)=>{
     const col=wt>=0?P:N,a=clamp(Math.abs(wt)/2.5,0.04,0.9)*(0.2+0.8*Math.min(1,Math.abs(act)));
@@ -460,7 +527,8 @@ function drawBrain(){
   for(let o=0;o<NO;o++)for(let hh=0;hh<NH;hh++)edge(xH,ys(NH,hh),xO,yO(o),c.w2[o*NH+hh],c.hid[hh]);
   // the memory output loops back to the memory input
   bctx.save();bctx.setLineDash([3*dpr,4*dpr]);bctx.strokeStyle=colors.muted;bctx.lineWidth=1*dpr;
-  bctx.beginPath();bctx.moveTo(xO,yO(3)+7*dpr);bctx.bezierCurveTo(xO,h-2*dpr,xI,h-2*dpr,xI,ys(NR,NR-1)+5*dpr);bctx.stroke();bctx.restore();
+  const memRow=rows.findIndex(r=>r.i===IE+6);
+  bctx.beginPath();bctx.moveTo(xO,yO(4)+7*dpr);bctx.bezierCurveTo(xO,h-2*dpr,xI,h-2*dpr,xI,ys(NR,memRow)+5*dpr);bctx.stroke();bctx.restore();
   const node=(x,y,act,r)=>{
     const col=act>=0?P:N;
     bctx.beginPath();bctx.arc(x,y,r,0,Math.PI*2);
@@ -495,6 +563,39 @@ function updateSpecies(){
 }
 $("#species").addEventListener("click",e=>{const b=e.target.closest(".lin");if(!b)return;const id=+b.dataset.rep;if(id)select(id);});
 
+const SEL_LABELS={size:"Body size",speed:"Speed",sense:"Sight range",eyes:"Eyes",learn:"Learning",orn:"Ornament",pref:"Liking showy mates",mut:"Mutation rate"};
+function updateDarwin(){
+  if(!panelData||!panelData.darwin)return;
+  const st=panelData.darwin.struggle,S=panelData.darwin.selection;
+  $("#struggle").innerHTML=st===null?"The struggle for existence hasn’t been measured yet.":`<b>${Math.round(st*100)}%</b> of creatures that died in the last 5 days left no offspring. Darwin called this the struggle for existence: far more are born than can survive to breed.`;
+  $("#selection").innerHTML=SEL_TRAITS.map(t=>{
+    const v=S&&S[t.k]?S[t.k].s:0,c=clamp(v/1.2,-1,1);
+    const word=!S?"":v>0.25?"favored":v<-0.25?"against":"neutral";
+    return`<span>${SEL_LABELS[t.k]}</span><div class="bar mid"><i style="left:${c<0?50+c*50:50}%;width:${(Math.abs(c)*50).toFixed(1)}%;background:${v>=0?colors.herb:colors.carn}"></i></div><em>${word}</em>`;
+  }).join("");
+}
+const mindC=$("#mindchart"),mctx=mindC.getContext("2d");ro.observe(mindC);
+function updateMinds(){
+  if(!panelData||!panelData.minds)return;
+  const MD=panelData.minds,H=MD.history,last=H[H.length-1]||{learn:MD.learnStart,surp:0,know:MD.know};
+  const callRow=k=>{
+    const C=MD.calls[k],L=CALL_NAMES[k];
+    const status=C.meaning==="danger"?"Alarm call":C.meaning==="food"?"Food call":C.freq>0.02?"No fixed meaning":"Rarely used";
+    const detail=C.samples?`Made ${(C.freq*100).toFixed(0)}% of the time.${C.meaning&&C.listen>0.15?" Listeners react to it.":""}`:"Not measured yet.";
+    return`<div class="rec"><span><span class="dot ${k?"callb":"calla"}"></span>Call ${L}</span><b>${status}</b><small>${detail}</small></div>`;
+  };
+  $("#mind").innerHTML=callRow(0)+callRow(1)+
+    `<div class="rec"><span>Learning rate</span><b>${(last.learn*100).toFixed(2)}%</b><small>Island average. It started at ${(MD.learnStart*100).toFixed(2)}%. Learning costs energy, so evolution keeps it where its benefit balances its cost.</small></div>`+
+    `<div class="rec"><span>Know which plants are safe</span><b>${Math.round(last.know*100)}%</b><small>Share of grazers. The poisonous color can change every season, so this can’t be inherited. It has to be learned.</small></div>`+
+    `<div class="rec"><span>Surprise</span><b>${last.surp.toFixed(2)}</b><small>How badly creatures misjudge danger, on average. Lower means they anticipate it better.</small></div>`;
+  const w=mindC.width,h=mindC.height;mctx.clearRect(0,0,w,h);
+  mctx.strokeStyle=colors.line;mctx.lineWidth=1*dpr;mctx.beginPath();mctx.moveTo(0,h-0.5*dpr);mctx.lineTo(w,h-0.5*dpr);mctx.stroke();
+  if(H.length<2)return;
+  let maxL=0.001;for(const p of H)if(p.learn>maxL)maxL=p.learn;
+  const X=i=>i/(H.length-1)*w,top=4*dpr,span=h-top-2*dpr;
+  const line=(fn,col)=>{mctx.beginPath();H.forEach((p,i)=>{const y=h-2*dpr-fn(p)*span;i?mctx.lineTo(X(i),y):mctx.moveTo(X(i),y);});mctx.strokeStyle=col;mctx.lineWidth=2*dpr;mctx.lineJoin="round";mctx.stroke();};
+  line(p=>p.know,colors.herb);line(p=>p.learn/maxL,colors.accent);
+}
 function updateRecords(){
   const R=panelData.records;
   const rows=[
@@ -549,9 +650,10 @@ wc.addEventListener("pointerdown",e=>{
   if(!F)return;
   const r=wc.getBoundingClientRect(),V=view();
   const x=V.ox+(e.clientX-r.left)/r.width*V.vw,y=V.oy+(e.clientY-r.top)/r.height*V.vw;
-  if(tool==="inspect"){
-    const tol=Math.max(26/cam.z,24/(r.width/V.vw)),cr=F.cr;let best=0,bd=tol*tol;
-    for(let i=0;i<cr.length;i+=STRIDE){const dx=cr[i+1]-x,dy=cr[i+2]-y,d=dx*dx+dy*dy;if(d<bd){bd=d;best=cr[i];}}
+  if(tool==="inspect"||tool==="feed"){
+    const tol=Math.max(26/cam.z,24/(r.width/V.vw)),cr=F.cr;let best=0,bd=tol*tol,bx=x,by=y;
+    for(let i=0;i<cr.length;i+=STRIDE){const dx=cr[i+1]-x,dy=cr[i+2]-y,d=dx*dx+dy*dy;if(d<bd){bd=d;best=cr[i];bx=cr[i+1];by=cr[i+2];}}
+    if(tool==="feed"&&best)post({type:"tool",tool,x:bx,y:by});
     select(best);
     return;
   }

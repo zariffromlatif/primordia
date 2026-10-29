@@ -14,15 +14,17 @@
 <div class="wrap">
   <section class="worldcol">
     <h1>Primordia</h1>
-    <p class="lede">An island where creatures with tiny neural brains graze, hunt, pair up, call to each other and split into new species, while rain carves rivers through the land. Nothing is scripted: every behavior you see was inherited.</p>
+    <p class="lede">An island where creatures with tiny neural brains graze, hunt, learn, court mates, call to each other and split into new species, evolving by Darwin’s natural and sexual selection while rain carves rivers through the land. Nothing is scripted: every behavior you see was inherited or learned.</p>
     <div class="stage">
       <canvas id="world" aria-label="Simulated island with evolving creatures"></canvas>
       <div class="chip" id="season">Year 1, spring</div>
       <div class="chip chip-top" id="toolhint" hidden></div>
       <div class="chip chip-notice" id="notice" role="status" hidden></div>
+      <div class="chip chip-poison" id="poison"></div>
     </div>
     <div class="tools" role="group" aria-label="What tapping the island does">
       <button data-tool="inspect" aria-pressed="true">Inspect</button>
+      <button data-tool="feed" aria-pressed="false">Feed one</button>
       <button data-tool="rain" aria-pressed="false">Bring rain</button>
       <button data-tool="hunters" aria-pressed="false">Drop hunters</button>
       <button data-tool="meteor" aria-pressed="false">Aim a meteor</button>
@@ -36,7 +38,7 @@
       <button id="load">Load</button>
       <input type="file" id="load-file" accept=".json,application/json" hidden>
     </div>
-    <p class="hint">Circles graze, triangles hunt anything smaller than themselves, a yellow halo means a creature is calling, and a purple core means it’s sick. Pale clouds are storms; the rain they drop runs off into rivers and lakes. <span id="seedline"></span></p>
+    <p class="hint">Circles graze and triangles hunt. Grazers must learn which plants, gold or blue, are poisonous this season. Fan-shaped tails are ornaments that attract mates. Yellow and blue halos are the two calls, and a purple core means plague. Pale clouds are storms; the rain they drop runs off into rivers and lakes. <span id="seedline"></span></p>
   </section>
 
   <section class="panel">
@@ -61,6 +63,19 @@
       <p class="muted small chart-note" id="tree-note"></p>
     </div>
 
+    <div class="block">
+      <h2>Natural selection</h2>
+      <p class="muted small">Darwin’s mechanism, measured live. Each bar compares the parents of recently born grazers with the grazer population as a whole. A bar to the right means parents had more of that trait than average, so nature is currently favoring it.</p>
+      <p class="struggle" id="struggle"></p>
+      <div class="genes sel" id="selection"></div>
+    </div>
+    <div class="block">
+      <h2>Minds</h2>
+      <p class="muted small">Measured across the whole island. A call counts as meaningful only if it reliably goes with what the caller sees, two measurements in a row.</p>
+      <canvas id="mindchart"></canvas>
+      <div class="legend"><span><i style="background:var(--accent)"></i>Learning rate</span><span><i style="background:var(--herb)"></i>Know the safe plants</span></div>
+      <div class="records" id="mind"></div>
+    </div>
     <div class="block">
       <h2>Living species</h2>
       <ol id="species"></ol>

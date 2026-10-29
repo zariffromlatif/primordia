@@ -30,7 +30,7 @@ test("population never exceeds the cap and every creature stays valid", () => {
     assert.ok(w.creatures.length <= sim.CAP + 12, `population hit ${w.creatures.length}`);
   }
   for (const c of w.creatures) {
-    assert.ok(Number.isFinite(c.e) && Number.isFinite(c.mem) && c.sig >= 0);
+    assert.ok(Number.isFinite(c.e) && Number.isFinite(c.mem) && c.sigA >= 0 && c.sigB >= 0 && Number.isFinite(c.surprise));
     assert.ok(c.x >= 0 && c.x <= sim.W && c.y >= 0 && c.y <= sim.W);
     assert.ok(w.species.has(c.sp), "every creature belongs to a known species");
   }
@@ -247,4 +247,153 @@ test("bringing rain also brings a storm that soaks the ground", () => {
   sim.rain(w, x, y);
   assert.equal(w.storms.length, storms + 1);
   assert.equal(w.moist[land], 1);
+});
+
+/* ---------- minds: learning, prediction and calls ---------- */
+
+const living = w => w.creatures.filter(c => !c.dead);
+function grazerOnPlant(w, kind) {
+  const c = living(w).find(c => c.g.diet <= 0.5);
+  let k = 0;
+  while (!(w.terr[k] === sim.GRASS && w.ptype[k] === kind && w.water[k] === 0)) k++;
+  const place = () => { c.x = (k % sim.G + 0.5) * sim.CELL; c.y = (Math.floor(k / sim.G) + 0.5) * sim.CELL; w.plant[k] = 1; };
+  w.toxic = kind; w.creatures = [c];
+  return { c, place };
+}
+
+test("a grazer that can learn comes to avoid the poisonous plant, then refuses to eat it", () => {
+  const w = sim.makeWorld(21);
+  const { c, place } = grazerOnPlant(w, 1);
+  c.g.learn = 0.04; c.val[1] = 0.5; c.e = c.maxE * 0.5;
+  for (let i = 0; i < 40; i++) { place(); sim.step(w); }
+  assert.ok(c.val[1] < -0.2, `value of the poisonous plant fell to ${c.val[1].toFixed(2)}`);
+  const bites = c.bites;
+  place(); sim.step(w);
+  assert.equal(c.bites, bites, "it no longer eats the plant it learned is bad");
+});
+
+test("a grazer that cannot learn keeps its inborn taste", () => {
+  const w = sim.makeWorld(21);
+  const { c, place } = grazerOnPlant(w, 1);
+  c.g.learn = 0; const before = c.val[1];
+  for (let i = 0; i < 20; i++) { place(); sim.step(w); }
+  assert.equal(c.val[1], before);
+});
+
+test("what a creature learns about danger is not inherited", () => {
+  const w = sim.makeWorld(6);
+  const p = w.creatures[0];
+  p.pw.fill(4); // pretend the parent learned a lot
+  const child = sim.makeChild(w, p);
+  assert.deepEqual(Array.from(child.pw), Array.from(child.w2.subarray(5 * sim.NH, 6 * sim.NH)), "a newborn's predictor starts from its genes");
+  assert.ok(Math.max(...child.pw) < 3.9);
+});
+
+test("surprise falls as a creature learns what danger to expect", () => {
+  const w = sim.makeWorld(12);
+  const c = living(w)[0];
+  w.creatures = [c];
+  c.g.learn = 0.05; c.pb = 3; // its brain starts out expecting danger everywhere
+  for (let i = 0; i < 5; i++) sim.step(w);
+  const early = c.surprise;
+  for (let i = 0; i < 400; i++) { c.e = c.maxE * 0.7; sim.step(w); }
+  assert.ok(early > 0.1 && c.surprise < 0.05, `surprise went from ${early.toFixed(3)} to ${c.surprise.toFixed(3)}`);
+});
+
+test("a call made mostly when hunters are in sight is recognised as an alarm call, only after two measurements", () => {
+  const w = sim.makeWorld(30);
+  const fill = () => {
+    const M = w.mind;
+    M.n = 5000; M.threat = 5000 * 0.05; M.food = 5000 * 0.3; M.calmN = 4000; M.calmSpeed = 4000 * 0.1;
+    Object.assign(M.calls[0], { n: 400, threat: 400 * 0.6, food: 400 * 0.3, hearN: 200, hearSpeed: 200 * 0.5 });
+  };
+  fill(); sim.analyzeMinds(w);
+  assert.equal(w.calls[0].meaning, null, "one measurement is not enough");
+  fill(); sim.analyzeMinds(w);
+  assert.equal(w.calls[0].meaning, "danger");
+  assert.ok(w.events.some(e => e.text.includes("alarm call")));
+  assert.ok(w.events.some(e => e.text.includes("Listeners understand call A")));
+  assert.equal(w.calls[1].meaning, null, "the unused call has no meaning");
+});
+
+test("which plant is poisonous can change with the seasons, and gold and blue both grow", () => {
+  const w = sim.makeWorld(50);
+  let blue = 0; for (const t of w.ptype) blue += t;
+  assert.ok(blue / w.ptype.length > 0.25 && blue / w.ptype.length < 0.75);
+  assert.deepEqual(Array.from(sim.plantKinds(50)), Array.from(w.ptype), "plant patches are fixed by the seed");
+  const start = w.toxic;
+  for (let i = 0; i < 6000; i++) sim.step(w);
+  assert.ok(w.poisonFlips > 0 || w.toxic === start);
+  assert.ok(w.events.some(e => e.text.includes("poisonous")));
+});
+
+/* ---------- Darwin: natural and sexual selection ---------- */
+
+test("choosy creatures prefer showy, well-fed partners", () => {
+  const w = sim.makeWorld(41);
+  const [c, plain, showy] = living(w);
+  c.g.pref = 1; plain.g.orn = 0; showy.g.orn = 1;
+  plain.e = plain.maxE; showy.e = showy.maxE;
+  let wins = 0;
+  for (let i = 0; i < 200; i++) if (sim.mateScore(w, c, showy) > sim.mateScore(w, c, plain)) wins++;
+  assert.ok(wins > 190, `showy partner won ${wins} of 200`);
+  c.g.pref = -1; wins = 0;
+  for (let i = 0; i < 200; i++) if (sim.mateScore(w, c, showy) > sim.mateScore(w, c, plain)) wins++;
+  assert.ok(wins < 10, "a creature that dislikes ornaments avoids showy partners");
+});
+
+test("the selection meter detects when parents are bigger than average", () => {
+  const w = sim.makeWorld(42);
+  const grazers = living(w).filter(c => c.g.diet <= 0.5);
+  grazers.forEach((c, i) => { c.g.size = 0.8 + (i % 10) * 0.1; });
+  for (let i = 0; i < 4; i++) sim.samplePopulation(w);
+  const big = grazers.filter(c => c.g.size >= 1.5);
+  for (let i = 0; i < 80; i++) sim.recordParents(w, big[i % big.length], null);
+  sim.analyzeSelection(w);
+  assert.ok(w.selection.size.s > 1, `selection differential on size was ${w.selection.size.s.toFixed(2)}`);
+  assert.equal(w.selection.taste, undefined, "only listed traits are measured");
+});
+
+test("natural selection is only reported after a sustained signal", () => {
+  const w = sim.makeWorld(43);
+  const grazers = living(w).filter(c => c.g.diet <= 0.5);
+  grazers.forEach((c, i) => { c.g.speed = 0.6 + (i % 10) * 0.1; });
+  const fast = grazers.filter(c => c.g.speed >= 1.3);
+  const round = () => { for (let i = 0; i < 4; i++) sim.samplePopulation(w); for (let i = 0; i < 80; i++) sim.recordParents(w, fast[i % fast.length], null); w.tick += 500; sim.analyzeSelection(w); };
+  w.tick = 5000;
+  round(); round();
+  assert.ok(!w.events.some(e => e.text.includes("favoring faster")), "two measurements are not enough");
+  round();
+  assert.ok(w.events.some(e => e.text.includes("Natural selection is favoring faster bodies")));
+});
+
+test("the struggle for existence counts deaths that left no offspring", () => {
+  const w = sim.makeWorld(44);
+  w.deathsAll = 50; w.deathsNoKids = 40;
+  sim.analyzeSelection(w);
+  assert.equal(w.struggle, 0.8);
+});
+
+test("hand-feeding a creature fills its energy (artificial selection)", () => {
+  const w = sim.makeWorld(45);
+  const c = living(w)[0];
+  c.e = 1;
+  assert.equal(sim.feedCreature(w, c.x, c.y), c);
+  assert.equal(c.e, c.maxE);
+  assert.ok(w.events.some(e => e.text.includes("artificial selection")));
+});
+
+test("everything learned and measured survives a save and load", () => {
+  const w = sim.makeWorld(46);
+  for (let i = 0; i < 1500; i++) sim.step(w);
+  const c = living(w)[0];
+  c.val[0] = -0.7; c.pw[2] = 1.25; c.surprise = 0.3;
+  const back = sim.deserialize(JSON.parse(JSON.stringify(sim.serialize(w))));
+  const d = back.creatures.find(x => x.id === c.id);
+  assert.equal(d.val[0], c.val[0]);
+  assert.equal(d.pw[2], c.pw[2]);
+  assert.equal(d.surprise, 0.3);
+  assert.equal(back.toxic, w.toxic);
+  assert.deepEqual(back.calls, w.calls);
+  assert.deepEqual(Array.from(back.ptype), Array.from(w.ptype));
 });

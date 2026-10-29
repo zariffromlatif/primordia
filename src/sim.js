@@ -7,7 +7,7 @@
  * the same history and a saved snapshot carries on exactly where it left off.
  */
 const W=1024,G=128,CELL=W/G,YEAR=4000,CAP=1000;
-const MAX_EYES=6,IE=MAX_EYES*3,NI=IE+5,NH=8,NO=4; // 3 inputs per eye slot, then energy, water ahead, pulse, calls, memory
+const MAX_EYES=6,IE=MAX_EYES*3,NI=IE+8,NH=8,NO=6; // 3 inputs per eye slot, then energy, water ahead, pulse, poisoned, call A, call B, memory, surprise
 const DEEP=0,SHALLOW=1,SAND=2,GRASS=3,FOREST=4,ROCK=5;
 const FERT=[0,0.25,0.15,1,0.85,0.05];
 const MOVE=[0.3,0.6,0.95,1,0.85,0.65];
@@ -21,6 +21,7 @@ const BUCKET=64,BN=W/BUCKET;
 const SEASONS=["spring","summer","autumn","winter"];
 const SPECIES_GAP=0.6;      // genetic distance at which a new species is recognised
 const PLAGUE_TICKS=700;     // how long an infection lasts
+const CALL_NAMES=["A","B"],PLANT_NAMES=["gold","blue"];
 const MATURE=90,MATE_RANGE=26,REST=60,SELF_WAIT=200; // breeding age, how close a mate must be, pause after breeding, wait before budding alone
 
 function mulberry32(a){return function(){a|=0;a=(a+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296;};}
@@ -73,6 +74,21 @@ function logEvent(w,text){w.events.unshift({t:w.tick,text});if(w.events.length>4
 
 /* ---------------- world ---------------- */
 
+/* Where gold and where blue plants grow. Fixed by the seed, so snapshots don't need to store it. */
+function plantKinds(seed){
+  const r=mulberry32((seed^0x51ED27)>>>0),N=64,lat=new Float32Array(N*N);for(let i=0;i<lat.length;i++)lat[i]=r();
+  const sm=t=>t*t*(3-2*t);
+  const noise=(x,y)=>{const xi=Math.floor(x),yi=Math.floor(y),xf=x-xi,yf=y-yi,g=(a,b)=>lat[(a&63)*N+(b&63)];
+    const a=g(xi,yi),b=g(xi+1,yi),c=g(xi,yi+1),d=g(xi+1,yi+1),u=sm(xf),v=sm(yf);return a+(b-a)*u+(c-a)*v+(a-b-c+d)*u*v;};
+  const out=new Uint8Array(G*G);
+  for(let j=0;j<G;j++)for(let i=0;i<G;i++){
+    let s=0,amp=0.5,f=1,n=0;
+    for(let o=0;o<3;o++){s+=amp*noise((i+0.5)/G*7*f+o*13.1,(j+0.5)/G*7*f+o*7.7);n+=amp;amp*=0.5;f*=2;}
+    out[j*G+i]=s/n>0.5?1:0;
+  }
+  return out;
+}
+
 /* Everything about a world except its living things. Snapshots rebuild worlds through here too. */
 function initWorld(seed,height,fnoise){
   const N=G*G;
@@ -87,7 +103,12 @@ function initWorld(seed,height,fnoise){
     climate:null,plagueActive:false,callingLogged:false,pairsLogged:false,eyeLog:false,
     lastCarnArrival:-99999,hadCarn:false,lowHerbLogged:false,lastConvertLog:-99999,
     births:0,pairBirths:0,deaths:0,lastBirths:0,lastPairBirths:0,nHerb:0,nCarn:0,nSick:0,nImmune:0,nCalling:0,
-    records:{age:{v:0,who:""},kids:{v:0,who:""},kills:{v:0,who:""},gen:{v:0,who:""}}};
+    records:{age:{v:0,who:""},kids:{v:0,who:""},kills:{v:0,who:""},gen:{v:0,who:""}},
+    // learning, prediction and calls
+    ptype:plantKinds(seed),toxic:0,poisonFlips:0,know:0,
+    mind:freshMind(),calls:[freshCall(),freshCall()],mindHistory:[],learnStart:0,learnUpLogged:false,learnDownLogged:false,
+    // Darwin: natural and sexual selection, measured
+    sel:freshSel(),selection:null,selTrend:{},struggle:null,ornStart:0,ornLogged:false,fedLogged:false,deathsNoKids:0,deathsAll:0};
   reshape(w);
   return w;
 }
@@ -114,9 +135,12 @@ function makeWorld(seed){
   w.wind=r()*Math.PI*2;
   for(let k=0;k<G*G;k++){w.plant[k]=w.fert[k]*start[k];w.moist[k]=w.terr[k]<=SHALLOW?1:0.5;}
   for(let i=0;i<20;i++)hydro(w,true); // let the rivers find their beds before anything lives here
+  w.toxic=rnd(w)<0.5?0:1;
   for(let i=0;i<6;i++)spawnGroup(w,"herb",20);
   census(w);
-  logEvent(w,"The island rose from the sea. Six species of grazers, 120 creatures with random brains, were released onto it.");
+  w.learnStart=avgLearn(w);
+  w.ornStart=avgTrait(w,"orn");
+  logEvent(w,`The island rose from the sea. Six species of grazers, 120 creatures with random brains, were released onto it. Its ${PLANT_NAMES[w.toxic]} plants are poisonous.`);
   sample(w);
   return w;
 }
@@ -269,12 +293,17 @@ function randomGenome(w,carn){
     diet:carn?0.75+rnd(w)*0.2:rnd(w)*0.25,
     mut:0.06+rnd(w)*0.08,
     eyes:3,
-    fov:2.8+rnd(w)*1.2};
+    fov:2.8+rnd(w)*1.2,
+    learn:rnd(w)*0.01,                  // how fast it learns from experience; learning costs energy
+    taste:(rnd(w)-0.5)*0.4,             // inborn liking for gold (+) or blue (-) plants
+    orn:rnd(w)*0.3,                     // ornament: a showy display, like a peacock's tail; costs energy
+    pref:0.25+(rnd(w)-0.5)*0.6};        // how much it favors showy mates; starts with a mild bias (sensory bias)
 }
 
-/* Inputs: three per eye slot (plants, prey, hunter), filled only for the eyes the body has, from
-   the leftmost eye to the rightmost; then energy, water ahead, pulse, calls heard and memory.
-   Outputs: 0 turn, 1 speed, 2 call, 3 memory. */
+/* Inputs: three per eye slot (food, prey, hunter), filled only for the eyes the body has, from
+   the leftmost eye to the rightmost; then energy, water ahead, pulse, feeling poisoned, call A heard,
+   call B heard, memory and surprise. Food is seen through what the creature has learned about it.
+   Outputs: 0 turn, 1 speed, 2 call A, 3 call B, 4 memory, 5 how dangerous it expects the next moment to be. */
 function randomBrain(w,carn){
   const w1=new Float32Array(NI*NH),b1=new Float32Array(NH),w2=new Float32Array(NO*NH),b2=new Float32Array(NO);
   for(let i=0;i<w1.length;i++)w1[i]=gauss(w)*0.5;
@@ -290,14 +319,18 @@ function randomBrain(w,carn){
   for(const i of [2,5,8])w1[1*NI+i]+=k*0.8;
   if(carn)for(const i of [1,4,7])w1[1*NI+i]+=k*0.8;
   b1[1]+=0.3;w2[1*NH+1]+=1.4;b2[1]+=0.2;
-  b2[2]-=0.8; // calling costs energy, so it starts mostly switched off
+  b2[2]-=0.8;b2[3]-=0.8; // calling costs energy, so both calls start mostly switched off
+  b2[5]-=1.2;            // start out expecting little danger
   return{w1,b1,w2,b2};
 }
 
 function shell(g,brain){
   const c={id:0,x:0,y:0,a:0,g,w1:brain.w1,b1:brain.b1,w2:brain.w2,b2:brain.b2,
     inp:new Float32Array(NI),hid:new Float32Array(NH),out:new Float32Array(NO),
-    gen:0,age:0,kids:0,kills:0,cool:0,rest:0,wait:0,v:0,sig:0,mem:0,sick:0,immune:false,dead:false,cause:"",
+    gen:0,age:0,kids:0,kills:0,cool:0,rest:0,wait:0,v:0,sigA:0,sigB:0,mem:0,sick:0,immune:false,dead:false,cause:"",
+    pred:0,pb:0,surprise:0,fear:0,rBar:0,mood:0,ePrev:-1,poisoned:0,poisonType:0,bites:0,mates:0,fed:false,
+    val:new Float32Array([clamp(0.5+(g.taste||0),-1,1),clamp(0.5-(g.taste||0),-1,1)]), // learned value of gold, blue plants
+    pw:new Float32Array(NH),prevHid:new Float32Array(NH), // the danger predictor, tuned by experience and not inherited
     sp:0,parentId:0,mateId:0,e:0,maxAge:0,r:3+g.size*3.2,maxE:100*g.size};
   return c;
 }
@@ -307,6 +340,7 @@ function makeCreature(w,x,y,g,brain,gen,parent,energy){
   c.id=w.nextId++;c.x=x;c.y=y;c.a=rnd(w)*Math.PI*2;c.gen=gen;
   c.sp=parent?parent.sp:0;c.parentId=parent?parent.id:0;
   c.e=Math.min(energy,c.maxE);c.maxAge=2600+rnd(w)*900;
+  c.pw.set(brain.w2.subarray(5*NH,6*NH)); // the predictor starts from the inborn wiring
   return c;
 }
 
@@ -325,7 +359,11 @@ function makeChild(w,p,q){
     diet:clamp(pick().g.diet+gauss(w)*m*0.25,0,1),
     mut:clamp(pick().g.mut*Math.exp(gauss(w)*0.15),0.01,0.4),
     eyes,
-    fov:clamp(pick().g.fov+gauss(w)*m*1.2,0.5,6)};
+    fov:clamp(pick().g.fov+gauss(w)*m*1.2,0.5,6),
+    learn:clamp(pick().g.learn+gauss(w)*m*0.02,0,0.06),
+    taste:clamp(pick().g.taste+gauss(w)*m*0.4,-1,1),
+    orn:clamp(pick().g.orn+gauss(w)*m*0.3,0,1),
+    pref:clamp(pick().g.pref+gauss(w)*m*0.3,-1,1)};
   const w1=new Float32Array(NI*NH),b1=new Float32Array(NH),w2=new Float32Array(NO*NH),b2=new Float32Array(NO);
   for(let h=0;h<NH;h++){
     const s=pick();
@@ -465,12 +503,15 @@ function live(w,c,babies){
   // each eye looks down the middle of its own slice of the field of view
   inp.fill(0,0,IE);
   const pd=g.sense*0.55;
-  for(let e=0;e<ne;e++){const an=c.a-half+(e+0.5)*sec;inp[e*3]=plantAt(w,c.x+Math.cos(an)*pd,c.y+Math.sin(an)*pd);}
+  for(let e=0;e<ne;e++){
+    const an=c.a-half+(e+0.5)*sec,px=c.x+Math.cos(an)*pd,py=c.y+Math.sin(an)*pd;
+    if(px>=0&&py>=0&&px<W&&py<W){const k=cellOf(px,py);inp[e*3]=w.plant[k]*c.val[w.ptype[k]];} // plants look as good as it has learned they are
+  }
   const sr=g.sense,sr2=sr*sr;
   const bx0=clamp(((c.x-sr)/BUCKET)|0,0,BN-1),bx1=clamp(((c.x+sr)/BUCKET)|0,0,BN-1);
   const by0=clamp(((c.y-sr)/BUCKET)|0,0,BN-1),by1=clamp(((c.y+sr)/BUCKET)|0,0,BN-1);
   const hunter=g.diet>0.5,ready=c.rest===0&&c.age>MATURE&&c.e>c.maxE*0.8;
-  let prey=null,preyD=1e9,mate=null,mateD=1e9,heard=0;
+  let prey=null,preyD=1e9,mate=null,mateS=0,heardA=0,heardB=0;
   for(let by=by0;by<=by1;by++)for(let bx=bx0;bx<=bx1;bx++){
     const list=B[by*BN+bx];
     for(let n=0;n<list.length;n++){
@@ -478,10 +519,11 @@ function live(w,c,babies){
       const dx=o.x-c.x,dy=o.y-c.y,d2=dx*dx+dy*dy;if(d2>sr2)continue;
       const d=Math.sqrt(d2),cl=1-d/sr;
       if(c.sick>0&&o.sick===0&&!o.immune&&d<c.r+o.r+8&&rnd(w)<0.03)o.sick=PLAGUE_TICKS;
-      if(o.sig*cl>heard)heard=o.sig*cl;
+      if(o.sigA*cl>heardA)heardA=o.sigA*cl;
+      if(o.sigB*cl>heardB)heardB=o.sigB*cl;
       const smaller=o.r<c.r*1.15,threat=o.g.diet>0.5&&c.r<o.r*1.15;
       if(hunter&&c.cool===0&&smaller&&d<c.r+o.r+1.5&&d<preyD){prey=o;preyD=d;}
-      if(ready&&o.sp===c.sp&&o.rest===0&&o.age>MATURE&&o.e>o.maxE*0.5&&d<c.r+o.r+MATE_RANGE&&d<mateD){mate=o;mateD=d;}
+      if(ready&&o.sp===c.sp&&o.rest===0&&o.age>MATURE&&o.e>o.maxE*0.5&&d<c.r+o.r+MATE_RANGE){const sc=mateScore(w,c,o);if(sc>mateS){mateS=sc;mate=o;}}
       if(!smaller&&!threat)continue;
       const fx=dx*ca+dy*sa;if(fx<d*ch)continue; // outside the sight cone
       const b=Math.min(ne-1,((Math.atan2(dy*ca-dx*sa,fx)+half)/sec)|0)*3;
@@ -489,19 +531,38 @@ function live(w,c,babies){
       if(threat&&cl>inp[b+2])inp[b+2]=cl;
     }
   }
+  // Prediction: last tick the brain guessed how dangerous now would be. The error is its surprise,
+  // and a creature that can learn tunes its guesses from experience.
+  let threat=0,food=0;
+  for(let e=0;e<ne;e++){if(inp[e*3+2]>threat)threat=inp[e*3+2];const f=hunter?inp[e*3+1]:inp[e*3];if(f>food)food=f;}
+  const err=threat-c.pred,lr=g.learn;
+  c.surprise=c.surprise*0.7+Math.abs(err)*0.3;
+  c.fear=threat;
+  if(lr>0){const pr=lr*2;for(let h=0;h<NH;h++)c.pw[h]=clamp(c.pw[h]+pr*err*c.prevHid[h],-4,4);c.pb=clamp(c.pb+pr*err*2,-3,3);}
   inp[IE]=c.e/c.maxE;
   inp[IE+1]=waterAhead(w,c.x+ca*14,c.y+sa*14);
   inp[IE+2]=Math.sin(c.age*0.12);
-  inp[IE+3]=heard;
-  inp[IE+4]=c.mem;
+  inp[IE+3]=c.poisoned>0?1:0;
+  inp[IE+4]=heardA;
+  inp[IE+5]=heardB;
+  inp[IE+6]=c.mem;
+  inp[IE+7]=c.surprise;
   // think
   const hid=c.hid,out=c.out;
   for(let h=0;h<NH;h++){let s=c.b1[h];const o=h*NI;for(let i=0;i<NI;i++)s+=c.w1[o+i]*inp[i];hid[h]=Math.tanh(s);}
-  for(let k=0;k<NO;k++){let s=c.b2[k];const o=k*NH;for(let h=0;h<NH;h++)s+=c.w2[o+h]*hid[h];out[k]=Math.tanh(s);}
+  for(let k=0;k<NO;k++){
+    let s;
+    if(k===5){s=c.b2[5]+c.pb;for(let h=0;h<NH;h++)s+=c.pw[h]*hid[h];}
+    else{s=c.b2[k];const o=k*NH;for(let h=0;h<NH;h++)s+=c.w2[o+h]*hid[h];}
+    out[k]=Math.tanh(s);
+  }
+  c.prevHid.set(hid);
+  c.pred=(out[5]+1)*0.5;
   // act
   c.a+=out[0]*0.2;
-  c.sig=out[2]>0?out[2]:0;
-  c.mem=out[3];
+  c.sigA=out[2]>0?out[2]:0;
+  c.sigB=out[3]>0?out[3]:0;
+  c.mem=out[4];
   const k0=cellOf(c.x,c.y),tt=w.terr[k0];
   const v=(out[1]+1)*0.5*g.speed*1.3*MOVE[tt]*(1-0.4*w.water[k0]/255)*(c.sick?0.7:1);
   let nx=c.x+Math.cos(c.a)*v,ny=c.y+Math.sin(c.a)*v;
@@ -510,12 +571,24 @@ function live(w,c,babies){
   c.x=nx;c.y=ny;c.v=v;
   const s=g.size;
   // wide, long sight cones cost more to run, and so does every extra eye
-  let cost=0.04*Math.pow(s,0.8)+0.028*v*v*s+0.0007*g.sense*(0.35+0.65*g.fov/3.4)+0.006+0.002*ne+0.022*g.diet+0.03*c.sig;
+  let cost=0.04*Math.pow(s,0.8)+0.028*v*v*s+0.0007*g.sense*(0.35+0.65*g.fov/3.4)+0.006+0.002*ne+0.022*g.diet+0.03*(c.sigA+c.sigB)+lr*1.5+0.008*g.orn; // a learning brain and a showy ornament both cost energy
   if(c.sick)cost+=0.07;
   if(tt===DEEP)cost+=0.12;
   c.e-=cost;
   const herb=1-g.diet,eff=herb*herb;
-  if(eff>0.02){const k2=cellOf(c.x,c.y),p=w.plant[k2],amt=Math.min(p,0.045*s);w.plant[k2]=p-amt;c.e+=amt*22*eff;}
+  if(eff>0.02){
+    const k2=cellOf(c.x,c.y),pt=w.ptype[k2];
+    if(c.val[pt]>-0.2){ // it won't eat a plant it has learned is bad
+      const p=w.plant[k2],amt=Math.min(p,0.045*s);w.plant[k2]=p-amt;
+      if(amt>0.005){
+        const bad=pt===w.toxic;
+        if(bad){c.e-=amt*22*eff*0.9;c.poisoned=40;c.poisonType=pt;}else c.e+=amt*22*eff;
+        // taste learning: nudge the value of this colour toward what just happened
+        if(lr>0)c.val[pt]=clamp(c.val[pt]+lr*5*((bad?-1:1)-c.val[pt]),-1,1);
+        c.bites++;
+      }
+    }
+  }
   if(prey&&!prey.dead){
     const psp=w.species.get(c.sp);
     prey.dead=true;prey.cause="Eaten by "+(psp?psp.name:"a hunter")+" #"+c.id;
@@ -525,23 +598,38 @@ function live(w,c,babies){
     if(prey.sick&&!c.immune&&!c.sick&&rnd(w)<0.5)c.sick=PLAGUE_TICKS;
   }
   if(c.e>c.maxE)c.e=c.maxE;
-  if(c.e<=0){c.dead=true;c.cause=c.sick?"Died of plague":tt===DEEP?"Exhausted swimming in deep water":"Starved";return;}
+  // mood: energy gained beyond what it usually gets, smoothed
+  if(c.ePrev<0)c.ePrev=c.e;
+  const rw=(c.e-c.ePrev)/c.maxE*20;
+  c.rBar+=0.01*(rw-c.rBar);
+  c.mood=c.mood*0.97+clamp(rw-c.rBar,-1,1)*0.03;
+  // island-wide measurements of what calls mean
+  const M=w.mind;
+  M.n++;M.threat+=threat;M.food+=food;
+  if(threat<0.1){M.calmN++;M.calmSpeed+=out[1];}
+  if(c.sigA>0.3){const q=M.calls[0];q.n++;q.threat+=threat;q.food+=food;}
+  if(c.sigB>0.3){const q=M.calls[1];q.n++;q.threat+=threat;q.food+=food;}
+  if(threat<0.1&&heardA>0.25){const q=M.calls[0];q.hearN++;q.hearSpeed+=out[1];}
+  if(threat<0.1&&heardB>0.25){const q=M.calls[1];q.hearN++;q.hearSpeed+=out[1];}
+  if(c.e<=0){c.dead=true;c.cause=c.sick?"Died of plague":c.poisoned?"Poisoned by "+PLANT_NAMES[c.poisonType]+" plants":tt===DEEP?"Exhausted swimming in deep water":"Starved";return;}
   if(c.age>c.maxAge){c.dead=true;c.cause="Died of old age";return;}
   // Breed with a ready member of the same species close by. A creature that finds no mate
   // for a while buds on its own instead, so a lone pioneer can still found a population.
   if(ready&&w.creatures.length+babies.length<CAP){
-    let ch=null;
+    let ch=null,partner=null;
     if(mate&&!mate.dead){
+      partner=mate;
       ch=makeChild(w,c,mate);
       const ec=c.e*0.3,em=mate.e*0.3;
       c.e-=ec;mate.e-=em;ch.e=Math.min(ch.maxE,(ec+em)*0.85);
-      mate.rest=REST;mate.kids++;w.pairBirths++;
+      mate.rest=REST;mate.kids++;mate.mates++;c.mates++;w.pairBirths++;
     }else if(++c.wait>SELF_WAIT){
       const E=c.e;ch=makeChild(w,c);
       c.e=E*0.5;ch.e=Math.min(ch.maxE,E*0.42);
     }
     if(ch){
       c.rest=REST;c.wait=0;babies.push(ch);c.kids++;w.births++;
+      if(g.diet<=0.5)recordParents(w,c,partner);
       if(c.g.diet<=0.5&&ch.g.diet>0.5&&w.tick-w.lastConvertLog>3000){
         w.lastConvertLog=w.tick;
         const sp=w.species.get(c.sp);
@@ -558,6 +646,7 @@ function live(w,c,babies){
       }
     }
   }
+  c.ePrev=c.e;
 }
 
 /* ---------------- bookkeeping ---------------- */
@@ -592,7 +681,7 @@ function census(w){
   for(const c of w.creatures){
     if(c.dead)continue;
     if(c.g.diet>0.5)carn++;else herb++;
-    if(c.sick)sick++;if(c.immune)immune++;if(c.sig>0.3)calling++;
+    if(c.sick)sick++;if(c.immune)immune++;if(c.sigA>0.3||c.sigB>0.3)calling++;
     sc.set(c.sp,(sc.get(c.sp)||0)+1);
   }
   w.nHerb=herb;w.nCarn=carn;w.nSick=sick;w.nImmune=immune;w.nCalling=calling;w.spCounts=sc;
@@ -617,12 +706,144 @@ function rollClimate(w){
   }
 }
 
+/* ---------------- minds ---------------- */
+
+function freshMind(){
+  const call=()=>({n:0,threat:0,food:0,hearN:0,hearSpeed:0});
+  return{n:0,threat:0,food:0,calmN:0,calmSpeed:0,calls:[call(),call()]};
+}
+function freshCall(){return{meaning:null,freq:0,danger:0,food:0,listen:0,samples:0,heardLogged:false,pending:null,pendingN:0};}
+function avgLearn(w){let s=0,n=0;for(const c of w.creatures)if(!c.dead){s+=c.g.learn;n++;}return n?s/n:0;}
+
+/* Every 5 days: does either call reliably go with seeing a hunter, or with seeing food? And do
+   creatures that hear it change behavior even when they can't see a hunter themselves? A meaning
+   must hold for two measurements in a row before it's reported, and fades with some slack. */
+function analyzeMinds(w){
+  const M=w.mind;
+  if(M.n>=2000){
+    const baseT=M.threat/M.n,baseF=M.food/M.n,calm=M.calmN?M.calmSpeed/M.calmN:0;
+    for(let k=0;k<2;k++){
+      const s=M.calls[k],C=w.calls[k],L=CALL_NAMES[k];
+      C.samples=s.n;C.freq=s.n/M.n;
+      C.danger=s.n?s.threat/s.n-baseT:0;
+      C.food=s.n?s.food/s.n-baseF:0;
+      C.listen=s.hearN>=100?s.hearSpeed/s.hearN-calm:0;
+      const enough=s.n>=300;
+      let cand=enough&&C.danger>=0.12&&C.danger>C.food?"danger":enough&&C.food>=0.12&&C.food>C.danger?"food":null;
+      if(C.meaning&&cand===null&&enough&&(C.meaning==="danger"?C.danger:C.food)>=0.06)cand=C.meaning;
+      if(cand===C.pending)C.pendingN++;else{C.pending=cand;C.pendingN=1;}
+      if(C.pendingN>=2&&cand!==C.meaning){
+        if(cand===null)logEvent(w,`Call ${L} has lost its meaning. Creatures now make it no matter what they see.`);
+        else if(C.meaning)logEvent(w,cand==="danger"?`Call ${L} has changed meaning. It now goes with seeing a hunter, like an alarm call.`:`Call ${L} has changed meaning. It now goes with finding food.`);
+        else logEvent(w,cand==="danger"?`Call ${L} has taken on a meaning. Creatures mostly make it when a hunter is in sight, so it works as an alarm call.`:`Call ${L} has taken on a meaning. Creatures mostly make it when they see food.`);
+        C.meaning=cand;C.heardLogged=false;
+      }
+      if(C.meaning&&!C.heardLogged&&C.listen>0.15){
+        C.heardLogged=true;
+        logEvent(w,`Listeners understand call ${L}. Creatures that hear it speed up even when they can’t see a hunter themselves.`);
+      }
+    }
+  }
+  const avg=avgLearn(w);
+  if(w.learnStart>0&&!w.learnUpLogged&&avg>w.learnStart*2){w.learnUpLogged=true;logEvent(w,"Evolution is favoring learners. The average learning rate has doubled since the island began.");}
+  if(w.learnStart>0&&!w.learnDownLogged&&avg<w.learnStart*0.5){w.learnDownLogged=true;logEvent(w,"Evolution is turning learning down. On this island, a learning brain costs more energy than it saves, and the average learning rate has halved.");}
+  w.mind=freshMind();
+}
+
+/* How well grazers currently know which plants are safe, and other island-wide averages. */
+function sampleMinds(w){
+  let n=0,learn=0,surp=0,gn=0,know=0;
+  for(const c of w.creatures){
+    if(c.dead)continue;n++;learn+=c.g.learn;surp+=c.surprise;
+    if(c.g.diet<=0.5){gn++;if(c.val[1-w.toxic]-c.val[w.toxic]>0.4)know++;}
+  }
+  if(!n)return;
+  w.know=gn?know/gn:0;
+  w.mindHistory.push({learn:learn/n,surp:surp/n,know:w.know,a:w.calls[0].freq,b:w.calls[1].freq});
+  if(w.mindHistory.length>360)w.mindHistory.shift();
+}
+
+/* ---------------- natural and sexual selection, measured ---------------- */
+
+/* How attractive o looks to c. An ornament only shines on a well-fed body, so showy partners also
+   tend to be good foragers. Some luck is involved. */
+function mateScore(w,c,o){return Math.exp(c.g.pref*o.g.orn*clamp(o.e/o.maxE,0,1)*10)*(0.85+0.3*rnd(w));}
+
+/* Darwin's mechanism, made measurable. For each heritable trait we compare the parents of every
+   grazer born recently with the grazer population as a whole. If parents are bigger than average,
+   nature is selecting for size. The gap, in standard deviations, is the selection differential. */
+const SEL_TRAITS=[
+  {k:"size",up:"bigger bodies",down:"smaller bodies"},
+  {k:"speed",up:"faster bodies",down:"slower bodies"},
+  {k:"sense",up:"longer sight",down:"shorter sight"},
+  {k:"eyes",up:"more eyes",down:"fewer eyes"},
+  {k:"learn",up:"quicker learners",down:"slower learners"},
+  {k:"orn",up:"showier ornaments",down:"plainer looks"},
+  {k:"pref",up:"a taste for showy mates",down:"a taste for plain mates"},
+  {k:"mut",up:"higher mutation rates",down:"lower mutation rates"}
+];
+function freshSel(){const o={births:0,popN:0,par:{},pop:{},sq:{}};for(const t of SEL_TRAITS){o.par[t.k]=0;o.pop[t.k]=0;o.sq[t.k]=0;}return o;}
+function avgTrait(w,k){let s=0,n=0;for(const c of w.creatures)if(!c.dead&&c.g.diet<=0.5){s+=c.g[k];n++;}return n?s/n:0;}
+function recordParents(w,c,q){
+  const S=w.sel;
+  for(const t of SEL_TRAITS)S.par[t.k]+=q?(c.g[t.k]+q.g[t.k])/2:c.g[t.k];
+  S.births++;
+}
+function samplePopulation(w){
+  const S=w.sel;
+  for(const c of w.creatures){
+    if(c.dead||c.g.diet>0.5)continue;
+    S.popN++;for(const t of SEL_TRAITS){const v=c.g[t.k];S.pop[t.k]+=v;S.sq[t.k]+=v*v;}
+  }
+}
+function analyzeSelection(w){
+  const S=w.sel,out={};
+  if(S.births>=60&&S.popN>=200){
+    for(const t of SEL_TRAITS){
+      const mean=S.pop[t.k]/S.popN,sd=Math.sqrt(Math.max(1e-9,S.sq[t.k]/S.popN-mean*mean));
+      const diff=(S.par[t.k]/S.births-mean)/sd;
+      out[t.k]={s:diff,mean};
+      const tr=w.selTrend[t.k]||(w.selTrend[t.k]={dir:0,n:0,last:-1e9});
+      const dir=sd<1e-4?0:diff>0.4?1:diff<-0.4?-1:0;
+      if(dir&&dir===tr.dir)tr.n++;else{tr.dir=dir;tr.n=dir?1:0;}
+      if(tr.n>=3&&w.tick-tr.last>YEAR){
+        tr.last=w.tick;
+        logEvent(w,`Natural selection is favoring ${dir>0?t.up:t.down} among grazers. The parents of newborns have differed from the average for 15 days running.`);
+      }
+    }
+    w.selection=out;
+  }
+  if(w.deathsAll>=40)w.struggle=w.deathsNoKids/w.deathsAll;
+  w.deathsAll=0;w.deathsNoKids=0;
+  const orn=avgTrait(w,"orn");
+  if(!w.ornLogged&&orn>0.35&&orn>w.ornStart*2){
+    w.ornLogged=true;
+    logEvent(w,"Sexual selection at work. Ornaments have doubled in size even though they cost energy, because mates prefer showy partners.");
+  }
+  w.sel=freshSel();
+}
+
+/* Artificial selection: hand-feeding a creature lets it breed right away. */
+function feedCreature(w,x,y){
+  let best=null,bd=40*40;
+  for(const c of w.creatures){if(c.dead)continue;const dx=c.x-x,dy=c.y-y,d=dx*dx+dy*dy;if(d<bd){bd=d;best=c;}}
+  if(!best)return null;
+  best.e=best.maxE;best.fed=true;
+  w.flashes.push({x:best.x,y:best.y,r:24,life:1,kind:"feed"});
+  if(!w.fedLogged){w.fedLogged=true;logEvent(w,"You fed a creature by hand, so it can breed sooner. Choosing who breeds is artificial selection, the topic Darwin opened On the Origin of Species with.");}
+  return best;
+}
+
 /* ---------------- the tick ---------------- */
 
 function step(w){
   const t=++w.tick;
   if(w.climate&&t>=w.climate.until){logEvent(w,w.climate.end);w.climate=null;}
-  if(t%1000===500)rollClimate(w);
+  if(t%1000===500){
+    rollClimate(w);
+    // each season, a coin flip may switch which plants are poisonous
+    if(rnd(w)<0.5){w.toxic=1-w.toxic;w.poisonFlips++;logEvent(w,`The ${PLANT_NAMES[w.toxic]} plants have turned poisonous, and the ${PLANT_NAMES[1-w.toxic]} ones are safe again.`);}
+  }
   const sv=warmth(t);w.season=sv;
   weather(w);
   if(t%HYDRO_EVERY===0)hydro(w);
@@ -637,7 +858,7 @@ function step(w){
   for(const c of C)if(!c.dead)live(w,c,babies);
   let n=0;
   for(const c of C){
-    if(c.dead){w.deaths++;checkRecords(w,c);const k=cellOf(c.x,c.y);P[k]=Math.min(1,P[k]+0.2*c.g.size);}
+    if(c.dead){w.deaths++;w.deathsAll++;if(c.kids===0)w.deathsNoKids++;checkRecords(w,c);const k=cellOf(c.x,c.y);P[k]=Math.min(1,P[k]+0.2*c.g.size);}
     else C[n++]=c;
   }
   C.length=n;
@@ -664,8 +885,9 @@ function step(w){
     if(!w.pairsLogged&&ps>0.6){w.pairsLogged=true;logEvent(w,`Most young now have two parents. ${Math.round(ps*100)}% of recent births came from pairs mixing their genes.`);}
     else if(w.pairsLogged&&ps>=0&&ps<0.25){w.pairsLogged=false;logEvent(w,"Mates have grown scarce. Most young are budding off a single parent again.");}
   }
-  if(t%100===0)assignSpecies(w);
-  if(t%25===0)sample(w);
+  if(t%100===0){assignSpecies(w);sampleMinds(w);}
+  if(t%500===0){analyzeMinds(w);analyzeSelection(w);}
+  if(t%25===0){sample(w);samplePopulation(w);}
 }
 
 /* ---------------- interventions ---------------- */
@@ -721,12 +943,15 @@ function startPlague(w,x,y,message){
 
 /* A snapshot is plain JSON. It holds everything that can't be worked out again, including the
    random generator's state, so a loaded world continues exactly as the saved one would have. */
-const SNAPSHOT_VERSION=1;
+const SNAPSHOT_VERSION=2;
 const WORLD_KEYS=["seed","rs","tick","season","wind","storms","terrVer","hydroVer","nextId","maxGen","events","eventCount","history",
   "nextSpecies","hueBase","climate","plagueActive","callingLogged","pairsLogged","eyeLog","lastCarnArrival","hadCarn","lowHerbLogged",
-  "lastConvertLog","births","pairBirths","deaths","lastBirths","lastPairBirths","records"];
-const CREATURE_KEYS=["id","x","y","a","gen","age","kids","kills","cool","rest","wait","v","sig","mem","sick","immune","dead","cause",
-  "sp","parentId","mateId","e","maxAge"];
+  "lastConvertLog","births","pairBirths","deaths","lastBirths","lastPairBirths","records",
+  "toxic","poisonFlips","know","mind","calls","mindHistory","learnStart","learnUpLogged","learnDownLogged",
+  "sel","selection","selTrend","struggle","ornStart","ornLogged","fedLogged","deathsNoKids","deathsAll"];
+const CREATURE_KEYS=["id","x","y","a","gen","age","kids","kills","cool","rest","wait","v","sigA","sigB","mem","sick","immune","dead","cause",
+  "sp","parentId","mateId","e","maxAge","pred","pb","surprise","fear","rBar","mood","ePrev","poisoned","poisonType","bites","mates","fed"];
+const CREATURE_ARRAYS=["val","pw","prevHid"];
 const GRIDS=["height","fnoise","plant","fast","base","moist"];
 const BRAIN=[["w1",NI*NH],["b1",NH],["w2",NO*NH],["b2",NO]];
 
@@ -746,7 +971,7 @@ function serialize(w){
   for(const k of WORLD_KEYS)o[k]=w[k];
   for(const k of GRIDS)o[k]=toB64(w[k]);
   o.creatures=w.creatures.map(c=>{
-    const s={g:Object.assign({},c.g)};for(const k of CREATURE_KEYS)s[k]=c[k];
+    const s={g:Object.assign({},c.g)};for(const k of CREATURE_KEYS)s[k]=c[k];for(const k of CREATURE_ARRAYS)s[k]=Array.from(c[k]);
     const b=new Float32Array(NI*NH+NH+NO*NH+NO);let at=0;for(const [k] of BRAIN){b.set(c[k],at);at+=c[k].length;}
     s.brain=toB64(b);return s;
   });
@@ -767,7 +992,7 @@ function deserialize(o){
   for(const s of o.creatures){
     const b=fromB64(s.brain,NI*NH+NH+NO*NH+NO),brain={};let at=0;
     for(const [k,n] of BRAIN){brain[k]=b.slice(at,at+n);at+=n;}
-    const c=shell(s.g,brain);for(const k of CREATURE_KEYS)c[k]=s[k];
+    const c=shell(s.g,brain);for(const k of CREATURE_KEYS)c[k]=s[k];for(const k of CREATURE_ARRAYS)c[k].set(s[k]);
     w.creatures.push(c);
   }
   census(w);
@@ -780,5 +1005,7 @@ if (typeof module !== "undefined" && module.exports) {
     HYDRO_EVERY, ERODE_EVERY, REST,
     makeWorld, step, census, assignSpecies, distTo, meteor, rain, dropHunters, startPlague, hydro, erode, reshape, isLake,
     makeChild, spawnGroup, nameFor, seasonOf, yearOf, days, cellOf, terrAt, plantAt, pairShare, serialize, deserialize, rnd, warmth,
+    clamp, CALL_NAMES, PLANT_NAMES, SEL_TRAITS, plantKinds, analyzeMinds, sampleMinds, freshMind, avgLearn, avgTrait,
+    analyzeSelection, recordParents, samplePopulation, freshSel, feedCreature, mateScore,
   };
 }
