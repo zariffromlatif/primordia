@@ -3,11 +3,13 @@
  * Primordia simulation core.
  * Pure logic with no DOM access, so it runs in the browser, in a Web Worker and in Node tests.
  * In the browser these top-level declarations are shared with src/host.js and src/ui.js.
- * Every random number comes from the world's own generator (w.rs), so a seed always replays
- * the same history and a saved snapshot carries on exactly where it left off.
+ * Every random number comes from the world's own generator (w.rs), and everything a person does
+ * is recorded with its tick (w.actions), so a seed and that record always replay the same history
+ * and a saved snapshot carries on exactly where it left off.
  */
 const W=1024,G=128,CELL=W/G,YEAR=4000,CAP=1000;
-const MAX_EYES=6,IE=MAX_EYES*3,NI=IE+5,NH=8,NO=4; // 3 inputs per eye slot, then energy, water ahead, pulse, calls, memory
+const MAX_EYES=6,PER_EYE=4,IE=MAX_EYES*PER_EYE,NI=IE+6,NH=8,NO=4; // 4 inputs per eye slot, then energy, water ahead, pulse, calls, memory, thirst
+const SEE_PLANTS=0,SEE_PREY=1,SEE_HUNTER=2,SEE_WATER=3;           // what each eye reports
 const DEEP=0,SHALLOW=1,SAND=2,GRASS=3,FOREST=4,ROCK=5;
 const FERT=[0,0.25,0.15,1,0.85,0.05];
 const MOVE=[0.3,0.6,0.95,1,0.85,0.65];
@@ -22,6 +24,7 @@ const SEASONS=["spring","summer","autumn","winter"];
 const SPECIES_GAP=0.6;      // genetic distance at which a new species is recognised
 const PLAGUE_TICKS=700;     // how long an infection lasts
 const MATURE=90,MATE_RANGE=26,REST=60,SELF_WAIT=200; // breeding age, how close a mate must be, pause after breeding, wait before budding alone
+const FRESH_REACH=6;        // how many cells away an eye can make out fresh water
 
 function mulberry32(a){return function(){a|=0;a=(a+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296;};}
 function rnd(w){const a=w.rs=(w.rs+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296;}
@@ -39,11 +42,12 @@ const EPITHETS={
   hunterBig:["tyrannus","rex","gigas"],hunterFast:["rapax","celer","praedator"],hunter:["ferox","lupina","vorax","sanguinea"],
   big:["magna","grandis","robusta"],small:["minima","parva","pusilla"],fast:["velox","volans","agilis"],slow:["lenta","tarda","quieta"],
   manyEyed:["argus","multoculata","panoptes"],oneEyed:["cyclops","monocula","unoculata"],farSighted:["telescopa","longinqua","prospectans"],
-  keen:["oculata","vigilans","speculatrix"],
+  keen:["oculata","vigilans","speculatrix"],showy:["ornata","pavonina","splendens","fulgens"],
   plain:["vulgaris","communis","pratensis","modesta","errans","placida","silvestris","litoralis","borealis","australis","mitis","simplex","nomada","herbivora","frugalis","humilis"]
 };
 function epithetPool(g){
   if(g.diet>0.5)return g.size>1.6?EPITHETS.hunterBig:g.speed>1.6?EPITHETS.hunterFast:EPITHETS.hunter;
+  if(g.orn>0.65)return EPITHETS.showy;
   if(g.eyes>=5)return EPITHETS.manyEyed;
   if(g.eyes<=1)return EPITHETS.oneEyed;
   if(g.sense>150&&g.fov<2)return EPITHETS.farSighted;
@@ -64,6 +68,7 @@ function wetness(t){return 1-0.4*Math.sin(t/YEAR*Math.PI*2);}         // dry sum
 function cellOf(x,y){const i=clamp((x/CELL)|0,0,G-1),j=clamp((y/CELL)|0,0,G-1);return j*G+i;}
 function plantAt(w,x,y){if(x<0||y<0||x>=W||y>=W)return 0;return w.plant[cellOf(x,y)];}
 function terrAt(w,x,y){if(x<0||y<0||x>=W||y>=W)return DEEP;return w.terr[cellOf(x,y)];}
+function freshAt(w,x,y){if(x<0||y<0||x>=W||y>=W)return 0;return w.fresh[cellOf(x,y)];}
 function waterAhead(w,x,y){if(x<0||y<0||x>=W||y>=W)return 1;const k=cellOf(x,y),t=w.terr[k];return t===DEEP?1:t===SHALLOW?0.5:w.water[k]/510;}
 function bucketOf(x,y){const i=clamp((x/BUCKET)|0,0,BN-1),j=clamp((y/BUCKET)|0,0,BN-1);return j*BN+i;}
 function classify(h){return h<0.30?DEEP:h<SEA?SHALLOW:h<0.40?SAND:h<0.60?GRASS:h<0.78?FOREST:ROCK;}
@@ -79,20 +84,21 @@ function initWorld(seed,height,fnoise){
   const w={seed,rs:(Math.imul(seed|0,0x9E3779B1)^0x85EBCA6B)|0,height,fnoise,
     terr:new Uint8Array(N),fert:new Float32Array(N),plant:new Float32Array(N),shade:new Float32Array(N),
     fill:new Float32Array(N),down:new Int32Array(N),order:new Int32Array(N),
-    fast:new Float32Array(N),base:new Float32Array(N),flow:new Float32Array(N),steady:new Float32Array(N),moist:new Float32Array(N),water:new Uint8Array(N),rainBuf:new Float32Array(N),acc:new Float32Array(N),
-    storms:[],wind:0,terrVer:0,hydroVer:0,
+    fast:new Float32Array(N),base:new Float32Array(N),flow:new Float32Array(N),steady:new Float32Array(N),moist:new Float32Array(N),water:new Uint8Array(N),fresh:new Float32Array(N),rainBuf:new Float32Array(N),acc:new Float32Array(N),
+    storms:[],wind:0,terrVer:0,hydroVer:0,actions:[],next:0,replayable:true,
     tick:0,season:0.5,creatures:[],nextId:1,maxGen:0,
     events:[],eventCount:0,history:[],buckets:Array.from({length:BN*BN},()=>[]),flashes:[],
     species:new Map(),nextSpecies:1,hueBase:0,spCounts:new Map(),
     climate:null,plagueActive:false,callingLogged:false,pairsLogged:false,eyeLog:false,
     lastCarnArrival:-99999,hadCarn:false,lowHerbLogged:false,lastConvertLog:-99999,
-    births:0,pairBirths:0,deaths:0,lastBirths:0,lastPairBirths:0,nHerb:0,nCarn:0,nSick:0,nImmune:0,nCalling:0,
+    births:0,pairBirths:0,deaths:0,lastBirths:0,lastPairBirths:0,thirstDead:0,nHerb:0,nCarn:0,nSick:0,nImmune:0,nCalling:0,
     records:{age:{v:0,who:""},kids:{v:0,who:""},kills:{v:0,who:""},gen:{v:0,who:""}}};
   reshape(w);
   return w;
 }
 
-function makeWorld(seed){
+/* A new island from its seed, plus any recorded actions to replay as their ticks come round. */
+function makeWorld(seed,actions){
   const r=mulberry32(seed);
   const N=256,lat=new Float32Array(N*N);for(let i=0;i<lat.length;i++)lat[i]=r();
   const sm=t=>t*t*(3-2*t);
@@ -118,6 +124,9 @@ function makeWorld(seed){
   census(w);
   logEvent(w,"The island rose from the sea. Six species of grazers, 120 creatures with random brains, were released onto it.");
   sample(w);
+  w.actions=(actions||[]).filter(a=>TOOL_CODES[a.tool]&&Number.isInteger(a.t)&&a.t>=0&&Number.isFinite(a.x)&&Number.isFinite(a.y))
+    .map(a=>({t:a.t,tool:a.tool,x:Math.round(clamp(a.x,0,W-1)),y:Math.round(clamp(a.y,0,W-1))})).sort((a,b)=>a.t-b.t);
+  replayDue(w);
   return w;
 }
 
@@ -192,6 +201,23 @@ function updateWater(w){
     if(isLake(w,k)){Wt[k]=255;continue;}
     const f=Fl[k];Wt[k]=f>RIVER&&St[k]>RIVER*0.6?1+Math.min(253,(Math.log(f/RIVER)/lr*253)|0):0;
   }
+  // How close the nearest fresh water is, for eyes to make out: 1 on the water, fading to nothing
+  // FRESH_REACH cells away. A two-pass chamfer distance, forwards then backwards.
+  const Fr=w.fresh,D2=Math.SQRT2;
+  for(let k=0;k<G*G;k++)Fr[k]=Wt[k]>0?0:1e9;
+  for(let j=0;j<G;j++)for(let i=0;i<G;i++){
+    const k=j*G+i;let d=Fr[k];if(d===0)continue;
+    if(i>0)d=Math.min(d,Fr[k-1]+1);
+    if(j>0){d=Math.min(d,Fr[k-G]+1);if(i>0)d=Math.min(d,Fr[k-G-1]+D2);if(i<G-1)d=Math.min(d,Fr[k-G+1]+D2);}
+    Fr[k]=d;
+  }
+  for(let j=G-1;j>=0;j--)for(let i=G-1;i>=0;i--){
+    const k=j*G+i;let d=Fr[k];if(d===0)continue;
+    if(i<G-1)d=Math.min(d,Fr[k+1]+1);
+    if(j<G-1){d=Math.min(d,Fr[k+G]+1);if(i<G-1)d=Math.min(d,Fr[k+G+1]+D2);if(i>0)d=Math.min(d,Fr[k+G-1]+D2);}
+    Fr[k]=d;
+  }
+  for(let k=0;k<G*G;k++)Fr[k]=Math.max(0,1-Fr[k]/FRESH_REACH);
 }
 
 const CLIMATE_RAIN={drought:0.08,bloom:1.8,freeze:0.35};
@@ -269,26 +295,31 @@ function randomGenome(w,carn){
     diet:carn?0.75+rnd(w)*0.2:rnd(w)*0.25,
     mut:0.06+rnd(w)*0.08,
     eyes:3,
-    fov:2.8+rnd(w)*1.2};
+    fov:2.8+rnd(w)*1.2,
+    orn:rnd(w)*0.3,
+    pref:(rnd(w)-0.5)*0.4};
 }
 
-/* Inputs: three per eye slot (plants, prey, hunter), filled only for the eyes the body has, from
-   the leftmost eye to the rightmost; then energy, water ahead, pulse, calls heard and memory.
-   Outputs: 0 turn, 1 speed, 2 call, 3 memory. */
+/* Inputs: four per eye slot (plants, prey, hunters, fresh water), filled only for the eyes the
+   body has, from the leftmost eye to the rightmost; then energy, water ahead, pulse, calls heard,
+   memory and thirst. Outputs: 0 turn, 1 speed, 2 call, 3 memory.
+   Founders start with a few instincts wired into hidden neuron 0 (turning) and 1 (speed). */
 function randomBrain(w,carn){
   const w1=new Float32Array(NI*NH),b1=new Float32Array(NH),w2=new Float32Array(NO*NH),b2=new Float32Array(NO);
   for(let i=0;i<w1.length;i++)w1[i]=gauss(w)*0.5;
   for(let i=0;i<NH;i++)b1[i]=gauss(w)*0.2;
   for(let i=0;i<w2.length;i++)w2[i]=gauss(w)*0.5;
   const k=(1+rnd(w)*1.2)*(rnd(w)<0.8?1:0.2);
-  const pl=carn?0.2:1;
-  w1[0*NI+6]+=k*pl;w1[0*NI+0]-=k*pl;
-  if(carn){w1[0*NI+7]+=k;w1[0*NI+1]-=k;}
-  w1[0*NI+8]-=k;w1[0*NI+2]+=k;
-  w1[0*NI+IE+1]+=0.8*k;
+  const pl=carn?0.2:1,eye=(e,t)=>e*PER_EYE+t,T=0,S=NI; // eyes 0, 1, 2 look left, ahead, right
+  w1[T+eye(2,SEE_PLANTS)]+=k*pl;w1[T+eye(0,SEE_PLANTS)]-=k*pl;
+  if(carn){w1[T+eye(2,SEE_PREY)]+=k;w1[T+eye(0,SEE_PREY)]-=k;}
+  w1[T+eye(2,SEE_HUNTER)]-=k;w1[T+eye(0,SEE_HUNTER)]+=k;
+  w1[T+eye(2,SEE_WATER)]+=0.3*k;w1[T+eye(0,SEE_WATER)]-=0.3*k;
+  w1[T+IE+1]+=0.8*k;
   w2[0*NH+0]+=1.6;
-  for(const i of [2,5,8])w1[1*NI+i]+=k*0.8;
-  if(carn)for(const i of [1,4,7])w1[1*NI+i]+=k*0.8;
+  for(let e=0;e<3;e++)w1[S+eye(e,SEE_HUNTER)]+=k*0.8;
+  if(carn)for(let e=0;e<3;e++)w1[S+eye(e,SEE_PREY)]+=k*0.8;
+  w1[S+IE+5]+=0.4*k; // thirst hurries a creature along
   b1[1]+=0.3;w2[1*NH+1]+=1.4;b2[1]+=0.2;
   b2[2]-=0.8; // calling costs energy, so it starts mostly switched off
   return{w1,b1,w2,b2};
@@ -298,7 +329,7 @@ function shell(g,brain){
   const c={id:0,x:0,y:0,a:0,g,w1:brain.w1,b1:brain.b1,w2:brain.w2,b2:brain.b2,
     inp:new Float32Array(NI),hid:new Float32Array(NH),out:new Float32Array(NO),
     gen:0,age:0,kids:0,kills:0,cool:0,rest:0,wait:0,v:0,sig:0,mem:0,sick:0,immune:false,dead:false,cause:"",
-    sp:0,parentId:0,mateId:0,e:0,maxAge:0,r:3+g.size*3.2,maxE:100*g.size};
+    sp:0,parentId:0,mateId:0,e:0,h:1,maxAge:0,r:3+g.size*3.2,maxE:100*g.size};
   return c;
 }
 
@@ -325,7 +356,9 @@ function makeChild(w,p,q){
     diet:clamp(pick().g.diet+gauss(w)*m*0.25,0,1),
     mut:clamp(pick().g.mut*Math.exp(gauss(w)*0.15),0.01,0.4),
     eyes,
-    fov:clamp(pick().g.fov+gauss(w)*m*1.2,0.5,6)};
+    fov:clamp(pick().g.fov+gauss(w)*m*1.2,0.5,6),
+    orn:clamp(pick().g.orn+gauss(w)*m*0.3,0,1),
+    pref:clamp(pick().g.pref+gauss(w)*m*0.4,-1,1)};
   const w1=new Float32Array(NI*NH),b1=new Float32Array(NH),w2=new Float32Array(NO*NH),b2=new Float32Array(NO);
   for(let h=0;h<NH;h++){
     const s=pick();
@@ -375,7 +408,7 @@ function newSpecies(w,rep,parent){
   for(let i=0;!name;i++){const p=EPITHETS.plain[i%EPITHETS.plain.length],n=genus+" "+p+(i>=EPITHETS.plain.length?" "+(ROMAN[2+Math.floor(i/EPITHETS.plain.length)-1]||i):"");if(!taken.has(n))name=n;}
   const sp={id,genus,name,hue:(w.hueBase+id*137.508)%360,repG:Object.assign({},rep.g),repW:v,
     count:0,peak:0,born:w.tick,died:0,parentId:parent?parent.id:0,parentName:parent?parent.name:"",
-    announced:!parent,extinct:false,diet:rep.g.diet};
+    announced:!parent,extinct:false,showy:false,diet:rep.g.diet};
   w.species.set(id,sp);
   return sp;
 }
@@ -385,7 +418,7 @@ function brainVec(c){const v=new Float32Array(NI*NH+NO*NH);v.set(c.w1,0);v.set(c
 /* Body genes plus the mean difference between brain weights. Only the eyes both sides
    actually have are compared, since the wiring of a missing eye drifts without consequence. */
 function distTo(c,sp){
-  const g=c.g,r=sp.repG,v=sp.repW,ne=Math.min(g.eyes,Math.round(r.eyes))*3,n1=NI*NH;
+  const g=c.g,r=sp.repG,v=sp.repW,ne=Math.min(g.eyes,Math.round(r.eyes))*PER_EYE,n1=NI*NH;
   let s=0;
   for(let h=0;h<NH;h++){
     const o=h*NI;
@@ -394,7 +427,8 @@ function distTo(c,sp){
   }
   for(let i=0;i<NO*NH;i++)s+=Math.abs(c.w2[i]-v[n1+i]);
   return Math.abs(g.size-r.size)/2+Math.abs(g.speed-r.speed)/2.2+Math.abs(g.sense-r.sense)/130+Math.abs(g.diet-r.diet)*2
-    +Math.abs(g.eyes-r.eyes)*0.08+Math.abs(g.fov-r.fov)/10+s/(NH*(ne+NI-IE)+NO*NH);
+    +Math.abs(g.eyes-r.eyes)*0.08+Math.abs(g.fov-r.fov)/10+Math.abs(g.orn-r.orn)*0.4+Math.abs(g.pref-r.pref)*0.2
+    +s/(NH*(ne+NI-IE)+NO*NH);
 }
 
 function assignSpecies(w){
@@ -432,21 +466,26 @@ function assignSpecies(w){
   for(const c of w.creatures){
     if(c.dead)continue;
     let a=sums.get(c.sp);
-    if(!a){a={v:new Float32Array(L),size:0,speed:0,sense:0,diet:0,eyes:0,fov:0,n:0};sums.set(c.sp,a);}
+    if(!a){a={v:new Float32Array(L),size:0,speed:0,sense:0,diet:0,eyes:0,fov:0,orn:0,pref:0,n:0};sums.set(c.sp,a);}
     const v=a.v;for(let i=0;i<NI*NH;i++)v[i]+=c.w1[i];for(let i=0;i<NO*NH;i++)v[NI*NH+i]+=c.w2[i];
-    a.size+=c.g.size;a.speed+=c.g.speed;a.sense+=c.g.sense;a.diet+=c.g.diet;a.eyes+=c.g.eyes;a.fov+=c.g.fov;a.n++;
+    a.size+=c.g.size;a.speed+=c.g.speed;a.sense+=c.g.sense;a.diet+=c.g.diet;a.eyes+=c.g.eyes;a.fov+=c.g.fov;a.orn+=c.g.orn;a.pref+=c.g.pref;a.n++;
   }
   for(const [id,a] of sums){
     const sp=w.species.get(id);if(!sp||a.n<3)continue;
     for(let i=0;i<L;i++)sp.repW[i]=a.v[i]/a.n;
     const R=sp.repG;
     R.size=a.size/a.n;R.speed=a.speed/a.n;R.sense=a.sense/a.n;R.diet=sp.diet=a.diet/a.n;R.eyes=a.eyes/a.n;R.fov=a.fov/a.n;
+    R.orn=a.orn/a.n;R.pref=a.pref/a.n;
   }
   for(const s of alive){
     if(s.count>s.peak)s.peak=s.count;
     if(!s.announced&&s.count>=10){
       s.announced=true;
       logEvent(w,`A new species, ${s.name}, has split off from ${s.parentName}.`);
+    }
+    if(!s.showy&&s.count>=10&&s.repG.orn>0.65&&s.repG.pref>0.25){
+      s.showy=true;
+      logEvent(w,`Sexual selection is at work in ${s.name}. Its members choose showy mates, and their ornaments have grown to ${Math.round(s.repG.orn*100)}% of the most a body can carry.`);
     }
     if(s.count===0){
       s.extinct=true;s.died=w.tick;
@@ -465,12 +504,15 @@ function live(w,c,babies){
   // each eye looks down the middle of its own slice of the field of view
   inp.fill(0,0,IE);
   const pd=g.sense*0.55;
-  for(let e=0;e<ne;e++){const an=c.a-half+(e+0.5)*sec;inp[e*3]=plantAt(w,c.x+Math.cos(an)*pd,c.y+Math.sin(an)*pd);}
+  for(let e=0;e<ne;e++){
+    const an=c.a-half+(e+0.5)*sec,x=c.x+Math.cos(an)*pd,y=c.y+Math.sin(an)*pd;
+    inp[e*PER_EYE+SEE_PLANTS]=plantAt(w,x,y);inp[e*PER_EYE+SEE_WATER]=freshAt(w,x,y);
+  }
   const sr=g.sense,sr2=sr*sr;
   const bx0=clamp(((c.x-sr)/BUCKET)|0,0,BN-1),bx1=clamp(((c.x+sr)/BUCKET)|0,0,BN-1);
   const by0=clamp(((c.y-sr)/BUCKET)|0,0,BN-1),by1=clamp(((c.y+sr)/BUCKET)|0,0,BN-1);
   const hunter=g.diet>0.5,ready=c.rest===0&&c.age>MATURE&&c.e>c.maxE*0.8;
-  let prey=null,preyD=1e9,mate=null,mateD=1e9,heard=0;
+  let prey=null,preyD=1e9,mate=null,mateS=-1e9,heard=0;
   for(let by=by0;by<=by1;by++)for(let bx=bx0;bx<=bx1;bx++){
     const list=B[by*BN+bx];
     for(let n=0;n<list.length;n++){
@@ -481,12 +523,17 @@ function live(w,c,babies){
       if(o.sig*cl>heard)heard=o.sig*cl;
       const smaller=o.r<c.r*1.15,threat=o.g.diet>0.5&&c.r<o.r*1.15;
       if(hunter&&c.cool===0&&smaller&&d<c.r+o.r+1.5&&d<preyD){prey=o;preyD=d;}
-      if(ready&&o.sp===c.sp&&o.rest===0&&o.age>MATURE&&o.e>o.maxE*0.5&&d<c.r+o.r+MATE_RANGE&&d<mateD){mate=o;mateD=d;}
+      if(ready&&o.sp===c.sp&&o.rest===0&&o.age>MATURE&&o.e>o.maxE*0.5&&d<c.r+o.r+MATE_RANGE){
+        // Choice is mutual: each side must not be put off by the other's ornament. Among the
+        // acceptable, the one this creature likes best wins, and nearer breaks ties.
+        const like=g.pref*(o.g.orn-0.5);
+        if(like>-0.2&&o.g.pref*(g.orn-0.5)>-0.2&&like-d*0.002>mateS){mate=o;mateS=like-d*0.002;}
+      }
       if(!smaller&&!threat)continue;
       const fx=dx*ca+dy*sa;if(fx<d*ch)continue; // outside the sight cone
-      const b=Math.min(ne-1,((Math.atan2(dy*ca-dx*sa,fx)+half)/sec)|0)*3;
-      if(smaller&&cl>inp[b+1])inp[b+1]=cl;
-      if(threat&&cl>inp[b+2])inp[b+2]=cl;
+      const b=Math.min(ne-1,((Math.atan2(dy*ca-dx*sa,fx)+half)/sec)|0)*PER_EYE;
+      if(smaller){const vis=Math.min(1,cl*(1+0.6*o.g.orn));if(vis>inp[b+SEE_PREY])inp[b+SEE_PREY]=vis;} // ornaments catch the eye
+      if(threat&&cl>inp[b+SEE_HUNTER])inp[b+SEE_HUNTER]=cl;
     }
   }
   inp[IE]=c.e/c.maxE;
@@ -494,6 +541,7 @@ function live(w,c,babies){
   inp[IE+2]=Math.sin(c.age*0.12);
   inp[IE+3]=heard;
   inp[IE+4]=c.mem;
+  inp[IE+5]=1-c.h;
   // think
   const hid=c.hid,out=c.out;
   for(let h=0;h<NH;h++){let s=c.b1[h];const o=h*NI;for(let i=0;i<NI;i++)s+=c.w1[o+i]*inp[i];hid[h]=Math.tanh(s);}
@@ -509,14 +557,21 @@ function live(w,c,babies){
   if(ny<4||ny>W-4){c.a=-c.a;ny=clamp(ny,4,W-4);}
   c.x=nx;c.y=ny;c.v=v;
   const s=g.size;
-  // wide, long sight cones cost more to run, and so does every extra eye
-  let cost=0.04*Math.pow(s,0.8)+0.028*v*v*s+0.0007*g.sense*(0.35+0.65*g.fov/3.4)+0.006+0.002*ne+0.022*g.diet+0.03*c.sig;
+  // wide, long sight cones cost more to run, and so do every extra eye and a showy ornament
+  let cost=0.04*Math.pow(s,0.8)+0.028*v*v*s+0.0007*g.sense*(0.35+0.65*g.fov/3.4)+0.006+0.002*ne+0.022*g.diet+0.03*c.sig+0.012*g.orn;
   if(c.sick)cost+=0.07;
   if(tt===DEEP)cost+=0.12;
+  if(c.h<0.25)cost+=0.06*(0.25-c.h)/0.25+(c.h<=0?0.1:0); // dehydration
   c.e-=cost;
+  // Heat and hurry dry a body out. Rivers, lakes and puddles after rain fill it back up. Juicy
+  // plants in damp soil help a little, and the blood of a fresh kill a lot.
+  const k2=cellOf(c.x,c.y),mk=w.moist[k2];
+  let hy=c.h-(0.0004+0.0006*w.season)*(1+0.4*v)*Math.pow(s,0.3);
+  if(w.water[k2]>0)hy+=0.03;else if(mk>0.8)hy+=(mk-0.8)*0.03;
   const herb=1-g.diet,eff=herb*herb;
-  if(eff>0.02){const k2=cellOf(c.x,c.y),p=w.plant[k2],amt=Math.min(p,0.045*s);w.plant[k2]=p-amt;c.e+=amt*22*eff;}
+  if(eff>0.02){const p=w.plant[k2],amt=Math.min(p,0.045*s);w.plant[k2]=p-amt;c.e+=amt*22*eff;hy+=amt*0.04*mk;}
   if(prey&&!prey.dead){
+    hy+=0.35;
     const psp=w.species.get(c.sp);
     prey.dead=true;prey.cause="Eaten by "+(psp?psp.name:"a hunter")+" #"+c.id;
     const me=(g.diet-0.5)*2;
@@ -524,10 +579,16 @@ function live(w,c,babies){
     c.kills++;c.cool=30;
     if(prey.sick&&!c.immune&&!c.sick&&rnd(w)<0.5)c.sick=PLAGUE_TICKS;
   }
+  c.h=hy<0?0:hy>1?1:hy;
   if(c.e>c.maxE)c.e=c.maxE;
-  if(c.e<=0){c.dead=true;c.cause=c.sick?"Died of plague":tt===DEEP?"Exhausted swimming in deep water":"Starved";return;}
+  if(c.e<=0){
+    c.dead=true;
+    c.cause=c.sick?"Died of plague":c.h<=0?"Died of thirst":tt===DEEP?"Exhausted swimming in deep water":"Starved";
+    if(c.h<=0)w.thirstDead++;
+    return;
+  }
   if(c.age>c.maxAge){c.dead=true;c.cause="Died of old age";return;}
-  // Breed with a ready member of the same species close by. A creature that finds no mate
+  // Breed with a willing member of the same species close by. A creature that finds no mate
   // for a while buds on its own instead, so a lone pioneer can still found a population.
   if(ready&&w.creatures.length+babies.length<CAP){
     let ch=null;
@@ -622,7 +683,11 @@ function rollClimate(w){
 function step(w){
   const t=++w.tick;
   if(w.climate&&t>=w.climate.until){logEvent(w,w.climate.end);w.climate=null;}
-  if(t%1000===500)rollClimate(w);
+  if(t%1000===500){ // a new season
+    if(w.thirstDead>=15)logEvent(w,`${w.thirstDead} creatures died of thirst during the ${SEASONS[seasonOf(t-1)]}.`);
+    w.thirstDead=0;
+    rollClimate(w);
+  }
   const sv=warmth(t);w.season=sv;
   weather(w);
   if(t%HYDRO_EVERY===0)hydro(w);
@@ -666,6 +731,7 @@ function step(w){
   }
   if(t%100===0)assignSpecies(w);
   if(t%25===0)sample(w);
+  replayDue(w);
 }
 
 /* ---------------- interventions ---------------- */
@@ -717,16 +783,55 @@ function startPlague(w,x,y,message){
   return n;
 }
 
+/* ---------------- recorded actions ---------------- */
+
+/* Everything a person does to an island is recorded with the tick it happened on, so a link can
+   replay it at the same moment. Positions are rounded to whole units, live and replayed alike. */
+const TOOL_CODES={rain:"r",hunters:"h",meteor:"m",plague:"p"};
+const CODE_TOOLS={r:"rain",h:"hunters",m:"meteor",p:"plague"};
+
+function applyTool(w,tool,x,y){
+  if(tool==="rain")rain(w,x,y);
+  else if(tool==="hunters")dropHunters(w,x,y);
+  else if(tool==="meteor")meteor(w,x,y);
+  else if(tool==="plague")startPlague(w,x,y);
+}
+
+/* Use a tool now, between ticks. Acting during a replay takes history somewhere new, so the
+   actions still waiting to be replayed are dropped. */
+function act(w,tool,x,y){
+  if(!TOOL_CODES[tool])return false;
+  x=Math.round(clamp(x,0,W-1));y=Math.round(clamp(y,0,W-1));
+  w.actions.length=w.next;
+  w.actions.push({t:w.tick,tool,x,y});w.next++;
+  applyTool(w,tool,x,y);
+  return true;
+}
+
+function replayDue(w){
+  const A=w.actions;
+  while(w.next<A.length&&A[w.next].t<=w.tick){const a=A[w.next++];applyTool(w,a.tool,a.x,a.y);}
+}
+
+/* Actions in a link: /m5000.512.300 is a meteor on tick 5000 at (512, 300). */
+function encodeActions(list){return list.map(a=>`/${TOOL_CODES[a.tool]}${a.t}.${a.x}.${a.y}`).join("");}
+function decodeActions(text){
+  const out=[],re=/\/([rhmp])(\d{1,9})\.(\d{1,4})\.(\d{1,4})/g;let m;
+  while((m=re.exec(text)))out.push({t:+m[2],tool:CODE_TOOLS[m[1]],x:Math.min(W-1,+m[3]),y:Math.min(W-1,+m[4])});
+  return out.sort((a,b)=>a.t-b.t);
+}
+
 /* ---------------- snapshots ---------------- */
 
 /* A snapshot is plain JSON. It holds everything that can't be worked out again, including the
    random generator's state, so a loaded world continues exactly as the saved one would have. */
-const SNAPSHOT_VERSION=1;
-const WORLD_KEYS=["seed","rs","tick","season","wind","storms","terrVer","hydroVer","nextId","maxGen","events","eventCount","history",
+const SNAPSHOT_VERSION=2;
+const WORLD_KEYS=["seed","rs","tick","season","wind","storms","terrVer","hydroVer","actions","next","replayable","thirstDead",
+  "nextId","maxGen","events","eventCount","history",
   "nextSpecies","hueBase","climate","plagueActive","callingLogged","pairsLogged","eyeLog","lastCarnArrival","hadCarn","lowHerbLogged",
   "lastConvertLog","births","pairBirths","deaths","lastBirths","lastPairBirths","records"];
 const CREATURE_KEYS=["id","x","y","a","gen","age","kids","kills","cool","rest","wait","v","sig","mem","sick","immune","dead","cause",
-  "sp","parentId","mateId","e","maxAge"];
+  "sp","parentId","mateId","e","h","maxAge"];
 const GRIDS=["height","fnoise","plant","fast","base","moist"];
 const BRAIN=[["w1",NI*NH],["b1",NH],["w2",NO*NH],["b2",NO]];
 
@@ -754,8 +859,31 @@ function serialize(w){
   return o;
 }
 
+/* Format 1 brains had three inputs per eye and no thirst. The new inputs start unwired, the new
+   genes start neutral, and since format 1 kept no record of actions, the link can't replay it. */
+function upgrade1(o){
+  const NI1=23,IE1=18,remap=(src,dst)=>{
+    for(let h=0;h<NH;h++){
+      for(let e=0;e<MAX_EYES;e++)for(let t=0;t<3;t++)dst[h*NI+e*PER_EYE+t]=src[h*NI1+e*3+t];
+      for(let n=0;n<5;n++)dst[h*NI+IE+n]=src[h*NI1+IE1+n];
+    }
+  };
+  for(const s of o.creatures){
+    const b=fromB64(s.brain,NI1*NH+NH+NO*NH+NO),nb=new Float32Array(NI*NH+NH+NO*NH+NO);
+    remap(b,nb);nb.set(b.subarray(NI1*NH),NI*NH);
+    s.brain=toB64(nb);s.g.orn=0;s.g.pref=0;s.h=1;
+  }
+  for(const s of o.species){
+    const v=fromB64(s.repW,NI1*NH+NO*NH),nv=new Float32Array(NI*NH+NO*NH);
+    remap(v,nv);nv.set(v.subarray(NI1*NH),NI*NH);
+    s.repW=toB64(nv);s.repG.orn=0;s.repG.pref=0;s.showy=false;
+  }
+  return Object.assign(o,{version:2,actions:[],next:0,replayable:false,thirstDead:0});
+}
+
 function deserialize(o){
   if(!o||o.format!=="primordia")throw new Error("This file is not a saved Primordia island.");
+  if(o.version===1)o=upgrade1(o);
   if(o.version!==SNAPSHOT_VERSION)throw new Error(`This island was saved in format ${o.version}, but this version of Primordia reads format ${SNAPSHOT_VERSION}.`);
   const N=G*G;
   const w=initWorld(o.seed,fromB64(o.height,N),fromB64(o.fnoise,N));
@@ -776,9 +904,10 @@ function deserialize(o){
 
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    W, G, CELL, NI, NH, NO, IE, MAX_EYES, YEAR, CAP, DEEP, SHALLOW, SAND, GRASS, FOREST, ROCK, SEA, SPECIES_GAP, PLAGUE_TICKS,
-    HYDRO_EVERY, ERODE_EVERY, REST,
+    W, G, CELL, NI, NH, NO, IE, MAX_EYES, PER_EYE, SEE_PLANTS, SEE_PREY, SEE_HUNTER, SEE_WATER, YEAR, CAP,
+    DEEP, SHALLOW, SAND, GRASS, FOREST, ROCK, SEA, SPECIES_GAP, PLAGUE_TICKS, HYDRO_EVERY, ERODE_EVERY, REST, MATE_RANGE, MATURE,
     makeWorld, step, census, assignSpecies, distTo, meteor, rain, dropHunters, startPlague, hydro, erode, reshape, isLake,
     makeChild, spawnGroup, nameFor, seasonOf, yearOf, days, cellOf, terrAt, plantAt, pairShare, serialize, deserialize, rnd, warmth,
+    act, encodeActions, decodeActions, toB64, fromB64,
   };
 }

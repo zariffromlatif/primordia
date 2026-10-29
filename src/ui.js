@@ -19,13 +19,21 @@ let events=[];
 let flashes=[];
 let lastTreeKey="";  // what the family tree was last drawn for
 
-/* ---------- island links: #island-12345 replays the same island ---------- */
-function seedFromHash(){const m=/^#island-(\d{1,10})$/.exec(location.hash);return m?Number(m[1]):null;}
-let seed=seedFromHash();if(seed===null)seed=(Math.random()*1e9)|0;
+/* ---------- island links ----------
+   #island-12345 replays the same island, and each part like /m5000.512.300 replays something a
+   person did to it: here a meteor on tick 5000 at (512, 300). */
+function readHash(){const m=/^#island-(\d{1,10})((?:\/[rhmp]\d+\.\d+\.\d+)*)$/.exec(location.hash);return m?{seed:Number(m[1]),actions:decodeActions(m[2])}:null;}
+const opened=readHash();
+let seed=opened?opened.seed:(Math.random()*1e9)|0,actions=opened?opened.actions:[],replayable=true;
 let selectedId=0,follow=false,tool="inspect",speedIx=0,running=!reduce,frame=0;
 const cam={x:W/2,y:W/2,z:1};
-function writeHash(){if(location.hash!=="#island-"+seed){try{location.hash="island-"+seed;}catch(e){/* hash unavailable */}}}
-window.addEventListener("hashchange",()=>{const s=seedFromHash();if(s!==null&&s!==seed)newWorld(s);});
+function hashFor(){return"#island-"+seed+(replayable?encodeActions(actions):"");}
+// A new island gets its own history entry; recording another action just updates the link.
+function writeHash(newEntry){
+  const h=hashFor();if(location.hash===h)return;
+  try{if(newEntry)location.hash=h.slice(1);else history.replaceState(null,"",h);}catch(e){/* hash unavailable */}
+}
+window.addEventListener("hashchange",()=>{const h=readHash();if(h&&location.hash!==hashFor())newWorld(h.seed,h.actions);});
 
 /* ---------- the engine: a worker if possible, otherwise this page ---------- */
 let engine=null,pending=false,worldMsg=null;
@@ -52,7 +60,7 @@ function post(m){if(m.type==="new"||m.type==="load")worldMsg=m;engine.post(m);}
 function receive(m){
   if(m.type==="frame"){pending=false;takeFrame(m);}
   else if(m.type==="world"){
-    seed=m.seed;writeHash();
+    seed=m.seed;actions=m.actions;replayable=m.replayable;writeHash(true);
     F=null;terrain=null;hydro=null;panelData=null;events=[];flashes=[];
     selectedId=0;follow=false;buildInspector();
     cam.x=W/2;cam.y=W/2;cam.z=1;
@@ -68,6 +76,7 @@ function takeFrame(m){
   if(m.hydro)hydro=m.hydro;
   if(m.panels)panelData=m.panels;
   if(m.events){events=m.events;updateLog();}
+  if(m.actions){actions=m.actions;writeHash(false);updateSeedLine();}
   for(const f of m.flashes)flashes.push(f);
   F=m;
   if(m.missing&&m.missing===selectedId){select(0);notice("That creature had already died.");}
@@ -85,7 +94,7 @@ const LAKE_RGB=[56,108,158],ICE_RGB=[214,228,238],DRY_RGB=[214,176,120];
 
 let colors={};
 function hexRgb(h){h=h.replace("#","");if(h.length===3)h=h.split("").map(x=>x+x).join("");const n=parseInt(h,16);return[(n>>16)&255,(n>>8)&255,n&255];}
-function readColors(){const cs=getComputedStyle(document.documentElement);for(const n of["ink","muted","line","surface","pos","neg","herb","carn","plant","accent"])colors[n]=cs.getPropertyValue("--"+n).trim()||"#888888";colors.posRgb=hexRgb(colors.pos);colors.negRgb=hexRgb(colors.neg);lastTreeKey="";maybeDrawTree();}
+function readColors(){const cs=getComputedStyle(document.documentElement);for(const n of["ink","muted","line","surface","pos","neg","herb","carn","plant","accent","water"])colors[n]=cs.getPropertyValue("--"+n).trim()||"#888888";colors.posRgb=hexRgb(colors.pos);colors.negRgb=hexRgb(colors.neg);lastTreeKey="";maybeDrawTree();}
 readColors();
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change",readColors);
 new MutationObserver(readColors).observe(document.documentElement,{attributes:true,attributeFilter:["data-theme"]});
@@ -191,7 +200,12 @@ function drawWorld(){
   for(let i=0;i<cr.length;i+=STRIDE){
     const x=(cr[i+1]-V.ox)*k,y=(cr[i+2]-V.oy)*k;
     if(x<-pad||y<-pad||x>cw+pad||y>ch+pad)continue;
-    const a=cr[i+3],r=Math.max(cr[i+4]*k*grow,minR),hue=cr[i+5],hunt=cr[i+6]>0.5,sig=cr[i+7];
+    const a=cr[i+3],r=Math.max(cr[i+4]*k*grow,minR),hue=cr[i+5],hunt=cr[i+6]>0.5,sig=cr[i+7],orn=cr[i+11];
+    if(orn>0.12){ // the ornament is a tail plume, longer and brighter on showier creatures
+      const bx=x-Math.cos(a)*r*0.8,by=y-Math.sin(a)*r*0.8,len=r*(0.5+2*orn);
+      ctx.strokeStyle=`hsl(${hue|0} 85% ${(68+orn*16).toFixed(0)}%)`;ctx.lineWidth=Math.max(1,r*(0.25+0.45*orn));ctx.lineCap="round";
+      ctx.beginPath();ctx.moveTo(bx,by);ctx.lineTo(bx-Math.cos(a)*len,by-Math.sin(a)*len);ctx.stroke();ctx.lineCap="butt";
+    }
     if(sig>0.2){
       ctx.beginPath();ctx.arc(x,y,r+4*dpr,0,Math.PI*2);
       ctx.strokeStyle=`rgba(255,236,150,${Math.min(0.9,sig).toFixed(2)})`;ctx.lineWidth=2.2*dpr;ctx.stroke();
@@ -351,6 +365,8 @@ const GENES=[
   {k:"fov",label:"Field of view",min:0.5,max:6,fmt:v=>Math.round(v*180/Math.PI)+"°"},
   {k:"sense",label:"Sight range",min:20,max:220,fmt:v=>Math.round(v)+""},
   {k:"diet",label:"Meat in diet",min:0,max:1,fmt:v=>Math.round(v*100)+"%"},
+  {k:"orn",label:"Ornament",min:0,max:1,fmt:v=>Math.round(v*100)+"%"},
+  {k:"pref",label:"Taste in mates",min:-1,max:1,fmt:v=>v>0.15?`showy ${Math.round(v*100)}%`:v<-0.15?`plain ${Math.round(-v*100)}%`:"any"},
   {k:"mut",label:"Mutation rate",min:0.01,max:0.4,fmt:v=>(v*100).toFixed(1)+"%"}
 ];
 const EYE_NAMES=[[],["ahead"],["left","right"],["left","ahead","right"],["far left","left","right","far right"],
@@ -358,8 +374,8 @@ const EYE_NAMES=[[],["ahead"],["left","right"],["left","ahead","right"],["far le
 const OUTPUT_LABELS=["Turn","Speed","Call","Memory"];
 function brainRows(eyes){
   const rows=[];
-  for(let e=0;e<eyes;e++)for(let t=0;t<3;t++)rows.push({i:e*3+t,label:["Plants","Prey","Hunter"][t]+" "+EYE_NAMES[eyes][e]});
-  ["Energy","Water ahead","Pulse","Calls heard","Memory"].forEach((label,n)=>rows.push({i:IE+n,label}));
+  for(let e=0;e<eyes;e++)for(let t=0;t<PER_EYE;t++)rows.push({i:e*PER_EYE+t,label:["Plants","Prey","Hunter","Water"][t]+" "+EYE_NAMES[eyes][e]});
+  ["Energy","Water ahead","Pulse","Calls heard","Memory","Thirst"].forEach((label,n)=>rows.push({i:IE+n,label}));
   return rows;
 }
 const NUMBERS=["no","one","two","three","four","five","six"];
@@ -384,13 +400,13 @@ function buildInspector(){
   el.innerHTML=`<div class="insp-head"><span class="sw${builtFor.hunt?" tri":""}" id="i-sw"></span><div class="grow"><h2 id="i-name"></h2><p class="muted small" id="i-role"></p></div></div>
   <div class="insp-actions"><button id="i-follow" aria-pressed="false">Follow</button><button class="ghost" id="i-close">Close</button></div>
   <p class="status" id="i-status"></p>
-  <div class="meter"><span>Energy</span><div class="bar"><i id="i-energy"></i></div><em id="i-energy-v"></em></div>
+  <div class="meter"><span>Energy</span><div class="bar"><i id="i-energy"></i></div><em id="i-energy-v"></em><span>Water</span><div class="bar"><i id="i-water"></i></div><em id="i-water-v"></em></div>
   <dl class="facts"><div><dt>Age</dt><dd id="i-age"></dd></div><div><dt>Children</dt><dd id="i-kids"></dd></div><div><dt>Kills</dt><dd id="i-kills"></dd></div><div><dt>Health</dt><dd id="i-health"></dd></div></dl>
   <h3>Genes</h3>
   <div class="genes">${GENES.map(g=>`<span>${g.label}</span><div class="bar"><i id="g-${g.k}"></i></div><em id="gv-${g.k}"></em>`).join("")}</div>
   <h3>Brain</h3>
   <canvas id="brain" style="height:${rows*14+20}px" aria-label="Live diagram of this creature’s neural network"></canvas>
-  <p class="muted small">Its ${rows} senses, three for each of its ${NUMBERS[s.g.eyes]} ${s.g.eyes===1?"eye":"eyes"} plus five more, feed eight hidden neurons. They drive four outputs: turning, speed, a call that nearby creatures can hear, and a memory the brain reads back a moment later. Blue wiring excites, red inhibits, and brighter nodes are firing harder right now.</p>`;
+  <p class="muted small">Its ${rows} senses, four for each of its ${NUMBERS[s.g.eyes]} ${s.g.eyes===1?"eye":"eyes"} plus six more, feed eight hidden neurons. They drive four outputs: turning, speed, a call that nearby creatures can hear, and a memory the brain reads back a moment later. Blue wiring excites, red inhibits, and brighter nodes are firing harder right now.</p>`;
   $("#i-close").onclick=()=>select(0);
   $("#i-follow").onclick=()=>{follow=!follow;syncFollow();};
   syncFollow();
@@ -403,9 +419,11 @@ function mood(c){
   const i=c.inp;
   if(c.dead)return`Died: ${c.cause.charAt(0).toLowerCase()+c.cause.slice(1)}, at ${(c.age/100).toFixed(1)} days old.`;
   let threat=0,prey=0,plants=0;
-  for(let e=0;e<c.g.eyes;e++){plants=Math.max(plants,i[e*3]);prey=Math.max(prey,i[e*3+1]);threat=Math.max(threat,i[e*3+2]);}
+  for(let e=0;e<c.g.eyes;e++){const b=e*PER_EYE;plants=Math.max(plants,i[b+SEE_PLANTS]);prey=Math.max(prey,i[b+SEE_PREY]);threat=Math.max(threat,i[b+SEE_HUNTER]);}
   if(threat>0.25)return c.sig>0.4?"Spotted a hunter and is calling out.":"Spotted a hunter nearby.";
   if(c.sick)return"Sick with plague.";
+  if(c.drinking&&c.h<0.97)return"Drinking.";
+  if(c.h<0.25)return"Parched and looking for water.";
   if(c.g.diet>0.5&&prey>0.2)return"Stalking prey.";
   if(c.sig>0.5)return"Calling out.";
   if(i[IE+1]>0.9)return"Facing deep water.";
@@ -430,6 +448,9 @@ function updateInspector(){
   $("#i-energy").style.width=(ef*100).toFixed(1)+"%";
   $("#i-energy").style.background=ef<0.25?colors.carn:colors.herb;
   $("#i-energy-v").textContent=Math.round(ef*100)+"%";
+  $("#i-water").style.width=(clamp(c.h,0,1)*100).toFixed(1)+"%";
+  $("#i-water").style.background=c.h<0.25?colors.carn:colors.water;
+  $("#i-water-v").textContent=Math.round(c.h*100)+"%";
   $("#i-age").textContent=(c.age/100).toFixed(1)+" d";
   $("#i-kids").textContent=c.kids;
   $("#i-kills").textContent=c.kills;
@@ -520,7 +541,12 @@ function updateLog(){
   $("#log").innerHTML=events.map(e=>`<li><time>Day ${days(e.t)}</time><span>${italicizeSpecies(e.text)}</span></li>`).join("");
 }
 
-function updateSeedLine(){$("#seedline").textContent=`This is island ${seed}. Its link replays the same island and the same history, until someone steps in.`;}
+function updateSeedLine(){
+  const n=actions.length;
+  $("#seedline").textContent=!replayable
+    ?`This is island ${seed}, loaded from a save made before actions were recorded, so its link only replays how the island began.`
+    :`This is island ${seed}${n?` with ${n} recorded action${n===1?"":"s"}`:""}. Its link replays the island and its whole history${n?", including everything done to it":""}.`;
+}
 
 let noticeTimer=0;
 function notice(text){const n=$("#notice");n.textContent=text;n.hidden=false;clearTimeout(noticeTimer);noticeTimer=setTimeout(()=>{n.hidden=true;},5000);}
@@ -570,13 +596,13 @@ const playBtn=$("#play");
 function syncPlay(){playBtn.textContent=running?"Pause":(F&&F.tick?"Resume":"Start");}
 playBtn.onclick=()=>{running=!running;syncPlay();};
 $("#speed").onclick=()=>{speedIx=(speedIx+1)%SPEEDS.length;$("#speed").textContent=`Speed ${SPEEDS[speedIx]}×`;};
-function newWorld(s){post({type:"new",seed:s});}
+function newWorld(s,acts){post({type:"new",seed:s,actions:acts||[]});}
 $("#reset").onclick=()=>newWorld((Math.random()*1e9)|0);
 
 /* ---------- main loop ---------- */
 startEngine();
-writeHash();buildInspector();updateSeedLine();syncPlay();
-newWorld(seed);
+writeHash(false);buildInspector();updateSeedLine();syncPlay();
+newWorld(seed,actions);
 function loop(){
   // ask for the next frame as soon as the last one is in; the simulation steps while this one draws
   if(!pending){pending=true;engine.post({type:"frame",run:running,speed:SPEEDS[speedIx],budget:engine.kind==="worker"?40:12});}
