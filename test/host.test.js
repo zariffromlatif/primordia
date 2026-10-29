@@ -16,7 +16,7 @@ function open() {
 test("a new island announces itself, then sends its terrain and panels once", () => {
   const { ask } = open();
   const [hello] = ask({ type: "new", seed: 31 });
-  assert.deepEqual(hello, { type: "world", seed: 31, tick: 0, loaded: false });
+  assert.deepEqual(hello, { type: "world", seed: 31, tick: 0, loaded: false, actions: [], replayable: true });
   const [f1] = ask({ type: "frame", run: true, speed: 4 });
   assert.equal(f1.tick, 4);
   assert.equal(f1.cr.length % STRIDE, 0);
@@ -52,6 +52,8 @@ test("tools change the island and refresh the panels", () => {
   assert.deepEqual(ask({ type: "tool", tool: "meteor", x: 512, y: 512 }), []);
   const [f] = ask({ type: "frame", run: false });
   assert.equal(f.flashes[0].kind, "meteor");
+  assert.deepEqual(f.actions, [{ t: 2, tool: "meteor", x: 512, y: 512 }], "the page hears what to put in its link");
+  assert.equal(ask({ type: "frame", run: false })[0].actions, undefined);
   assert.ok(f.terrain, "the crater changed the ground");
   assert.ok(f.panels && f.events[0].text.includes("meteor"));
 });
@@ -64,7 +66,7 @@ test("an island saved through one host loads into another and carries on identic
   assert.equal(snap.type, "snapshot");
   assert.match(snap.name, /^primordia-island-34-day-\d+\.json$/);
   const [hello] = b.ask({ type: "load", text: snap.text });
-  assert.deepEqual(hello, { type: "world", seed: 34, tick: 600, loaded: true });
+  assert.deepEqual(hello, { type: "world", seed: 34, tick: 600, loaded: true, actions: [], replayable: true });
   const fa = a.ask({ type: "frame", run: true, speed: 300, budget: 1e9 })[0], fb = b.ask({ type: "frame", run: true, speed: 300, budget: 1e9 })[0];
   assert.deepEqual(Array.from(fb.cr), Array.from(fa.cr));
 });
@@ -76,4 +78,13 @@ test("a bad file is reported, and the current island keeps running", () => {
   assert.equal(err.type, "error");
   assert.match(err.message, /not a saved Primordia island/);
   assert.equal(ask({ type: "frame", run: true, speed: 1 })[0].tick, 1);
+});
+
+test("a new island can start with actions to replay", () => {
+  const { ask } = open();
+  const actions = [{ t: 3, tool: "rain", x: 100, y: 100 }];
+  assert.deepEqual(ask({ type: "new", seed: 36, actions })[0].actions, actions);
+  const [f] = ask({ type: "frame", run: true, speed: 5 });
+  assert.equal(f.flashes[0].kind, "rain", "the recorded rain fell on its tick");
+  assert.equal(f.actions, undefined, "a replay doesn't change the link");
 });
