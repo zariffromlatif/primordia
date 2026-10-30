@@ -22,7 +22,7 @@ let lastTreeKey="";  // what the family tree was last drawn for
 /* ---------- island links: #island-12345 replays the same island ---------- */
 function seedFromHash(){const m=/^#island-(\d{1,10})$/.exec(location.hash);return m?Number(m[1]):null;}
 let seed=seedFromHash();if(seed===null)seed=(Math.random()*1e9)|0;
-let selectedId=0,follow=false,tool="inspect",speedIx=0,running=!reduce,frame=0;
+let selectedId=0,pickedSp=0,follow=false,tool="inspect",speedIx=0,running=!reduce,frame=0; // pickedSp: the species tapped to pick it, if any
 const cam={x:W/2,y:W/2,z:1};
 function writeHash(){if(location.hash!=="#island-"+seed){try{location.hash="island-"+seed;}catch(e){/* hash unavailable */}}}
 window.addEventListener("hashchange",()=>{const s=seedFromHash();if(s!==null&&s!==seed)newWorld(s);});
@@ -60,7 +60,10 @@ function receive(m){
     if(m.loaded)notice(`Loaded island ${m.seed} on day ${days(m.tick)}.`);
   }
   else if(m.type==="snapshot")download(m.text,m.name);
-  else if(m.type==="error")notice(m.message);
+  else if(m.type==="error"){
+    if(m.during!=="frame")notice(m.message);
+    else{pending=false;running=false;syncPlay();notice(`The island hit a problem and was paused: ${m.message}`);} // stop stepping a world that just failed
+  }
 }
 
 function takeFrame(m){
@@ -70,7 +73,8 @@ function takeFrame(m){
   if(m.events){events=m.events;updateLog();}
   for(const f of m.flashes)flashes.push(f);
   F=m;
-  if(m.missing&&m.missing===selectedId){select(0);notice("That creature had already died.");}
+  if(m.missing&&m.missing===selectedId){const fromSp=pickedSp;select(0);notice(fromSp?"That species has died out.":"That creature had already died.");}
+  if(m.replaced&&m.replaced.id===selectedId)selectedId=m.replaced.by; // it died before the tap arrived, so another member of its species stands in
   if(m.panels){updateSpecies();updateRecords();updateDarwin();updateMinds();maybeDrawTree();}
 }
 
@@ -334,7 +338,7 @@ function drawTree(){
     const y=yOf.get(s.id),hunt=s.diet>0.5,col=spColor(s.hue,hunt),end=s.extinct?s.died:now,p=visParent(s);
     const op=s.extinct?0.45:1,name=s.name.length>maxChars?s.name.slice(0,maxChars-1)+"…":s.name;
     const tip=`${s.name}: ${s.extinct?`extinct after ${days(s.died-s.born)} days`:`${s.n} alive`}, ${hunt?"hunters":"grazers"}, since day ${days(s.born)}${s.parentName?`, split from ${s.parentName}`:""}`;
-    svg+=`<g class="tr${s.rep?" live":""}" data-sid="${s.id}"${s.rep?` data-rep="${s.rep}" tabindex="0" role="button"`:""} opacity="${op}"><title>${esc(tip)}</title>`;
+    svg+=`<g class="tr${s.rep?" live":""}" data-sid="${esc(s.id)}"${s.rep?` data-rep="${esc(s.rep)}" tabindex="0" role="button"`:""} opacity="${op}"><title>${esc(tip)}</title>`;
     svg+=`<rect x="0" y="${y-rowH/2}" width="${width}" height="${rowH}" fill="transparent"/>`;
     if(p&&yOf.has(p)){const px=X(s.born),py=yOf.get(p);svg+=`<path d="M${px.toFixed(1)} ${py}V${y}" stroke="${col}" stroke-width="1.5" fill="none"/><circle cx="${px.toFixed(1)}" cy="${py}" r="2.5" fill="${col}"/>`;}
     svg+=`<line x1="${X(s.born).toFixed(1)}" y1="${y}" x2="${Math.max(X(end),X(s.born)+2).toFixed(1)}" y2="${y}" stroke="${col}" stroke-width="${s.extinct?3:5}" stroke-linecap="round"/>`;
@@ -354,7 +358,7 @@ function drawTree(){
   const pr=panelData.pairs;
   $("#tree-note").textContent=(rows.length?`Each line is a species, from the day it split off to ${showExtinct?"today or to its extinction":"today, with the extinct ancestors it came from"}. Tap a living one to inspect a member. `:"")+(pr>=0?`${Math.round(pr*100)}% of recent births had two parents. `:"")+"The only illustration in Darwin’s On the Origin of Species was a tree like this.";
 }
-function treePick(e){const g=e.target.closest(".tr.live");if(!g)return;const id=+g.dataset.rep;if(id)select(id);}
+function treePick(e){const g=e.target.closest(".tr.live");if(!g)return;const id=+g.dataset.rep;if(id)select(id,+g.dataset.sid);}
 $("#tree").addEventListener("click",treePick);
 $("#tree-extinct").addEventListener("change",maybeDrawTree);
 $("#tree").addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();treePick(e);}});
@@ -392,9 +396,9 @@ function brainRows(eyes){
 const NUMBERS=["no","one","two","three","four","five","six"];
 
 let builtFor=null;
-function select(id){
-  selectedId=id||0;if(!selectedId)follow=false;
-  post({type:"select",id:selectedId});
+function select(id,sp){
+  selectedId=id||0;pickedSp=sp||0;if(!selectedId)follow=false;
+  post({type:"select",id:selectedId,sp});
   builtFor=null;buildInspector();
 }
 
@@ -480,7 +484,7 @@ function updateInspector(){
   if(!$("#i-name"))return;
   const hunt=c.g.diet>0.5;
   $("#i-sw").style.background=spColor(c.hue,hunt);
-  $("#i-name").innerHTML=`<i>${esc(c.name)}</i> #${c.id}`;
+  $("#i-name").innerHTML=`<i>${esc(c.name)}</i> #${esc(c.id)}`;
   $("#i-role").textContent=`${hunt?"Hunter":"Grazer"}, generation ${c.gen}, ${c.mateId?"born to a pair":c.parentId?"budded from one parent":"a founder"}`;
   $("#i-status").textContent=mood(c);
   const ef=clamp(c.e/c.maxE,0,1);
@@ -557,11 +561,11 @@ function updateSpecies(){
   let extinct=0;for(const s of panelData.species)if(s.extinct&&s.peak>=5)extinct++;
   $("#species").innerHTML=rows.length?rows.map(sp=>{
     const hunt=sp.diet>0.5;
-    return`<li><button class="lin" data-rep="${sp.rep}"><span class="sw${hunt?" tri":""}" style="background:${spColor(sp.hue,hunt)}"></span><span class="grow"><b><i>${esc(sp.name)}</i></b><small>${sp.n} alive, ${hunt?"hunters":"grazers"}, since day ${days(sp.born)}${sp.parentName?`, split from <i>${esc(sp.parentName)}</i>`:""}</small></span></button></li>`;
+    return`<li><button class="lin" data-rep="${esc(sp.rep)}" data-sid="${esc(sp.id)}"><span class="sw${hunt?" tri":""}" style="background:${spColor(sp.hue,hunt)}"></span><span class="grow"><b><i>${esc(sp.name)}</i></b><small>${sp.n} alive, ${hunt?"hunters":"grazers"}, since day ${days(sp.born)}${sp.parentName?`, split from <i>${esc(sp.parentName)}</i>`:""}</small></span></button></li>`;
   }).join(""):`<li class="muted small">Nothing is alive yet.</li>`;
   $("#extinct").textContent=extinct?`${extinct} species ${extinct===1?"has":"have"} gone extinct on this island so far.`:"No species has gone extinct yet.";
 }
-$("#species").addEventListener("click",e=>{const b=e.target.closest(".lin");if(!b)return;const id=+b.dataset.rep;if(id)select(id);});
+$("#species").addEventListener("click",e=>{const b=e.target.closest(".lin");if(!b)return;const id=+b.dataset.rep;if(id)select(id,+b.dataset.sid);});
 
 const SEL_LABELS={size:"Body size",speed:"Speed",sense:"Sight range",eyes:"Eyes",learn:"Learning",orn:"Ornament",pref:"Liking showy mates",mut:"Mutation rate"};
 function updateDarwin(){
@@ -604,7 +608,7 @@ function updateRecords(){
     ["Most kills",R.kills.v||"",R.kills.who],
     ["Deepest generation",R.gen.v||"",R.gen.who]
   ];
-  $("#records").innerHTML=rows.map(([label,v,who])=>`<div class="rec"><span>${label}</span><b>${v===""?"None yet":v}</b><small>${v===""?"":italicName(who)}</small></div>`).join("");
+  $("#records").innerHTML=rows.map(([label,v,who])=>`<div class="rec"><span>${label}</span><b>${v===""?"None yet":esc(v)}</b><small>${v===""?"":italicName(who)}</small></div>`).join("");
 }
 
 let nameRe=null,nameReKey="";
@@ -679,15 +683,20 @@ $("#reset").onclick=()=>newWorld((Math.random()*1e9)|0);
 startEngine();
 writeHash();buildInspector();updateSeedLine();syncPlay();
 newWorld(seed);
+let failed="";
 function loop(){
-  // ask for the next frame as soon as the last one is in; the simulation steps while this one draws
-  if(!pending){pending=true;engine.post({type:"frame",run:running,speed:SPEEDS[speedIx],budget:engine.kind==="worker"?40:12});}
-  drawWorld();
-  if(selectedId)drawBrain();
-  if(frame%6===0)drawChart();
-  if(frame%10===0){updateStats();updateInspector();}
+  requestAnimationFrame(loop); // asked for first, so a frame that fails to draw can't stop the island for good
+  try{
+    // ask for the next frame as soon as the last one is in; the simulation steps while this one draws
+    if(!pending){pending=true;engine.post({type:"frame",run:running,speed:SPEEDS[speedIx],budget:engine.kind==="worker"?40:12});}
+    drawWorld();
+    if(selectedId)drawBrain();
+    if(frame%6===0)drawChart();
+    if(frame%10===0){updateStats();updateInspector();}
+  }catch(e){
+    if(String(e)!==failed){failed=String(e);console.error(e);notice("Something went wrong drawing the island. New island starts afresh.");}
+  }
   frame++;
-  requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
 })();

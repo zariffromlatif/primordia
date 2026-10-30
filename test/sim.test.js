@@ -131,6 +131,27 @@ test("loading refuses files that aren't saved islands", () => {
   assert.throws(() => sim.deserialize({ ...o, height: "AAAA" }), /damaged/);
 });
 
+test("loading refuses a file with fields of the wrong kind, so an edited file can't break or take over the page", () => {
+  const w = sim.makeWorld(47);
+  for (let i = 0; i < 600; i++) sim.step(w);
+  const text = snap(w), edit = f => { const o = JSON.parse(text); f(o); return o; };
+  const bad = {
+    "markup in a record": o => { o.records.kids.v = '<img src=x onerror="alert(1)">'; },
+    "markup as a species id": o => { o.species[0].id = '"><svg onload="alert(1)">'; },
+    "markup as a creature id": o => { o.creatures[0].id = "<b>1</b>"; },
+    "a number written as text": o => { o.tick = "600"; },
+    "a number too big to store": o => { o.season = Infinity; },
+    "an object where a list belongs": o => { o.history = {}; },
+    "a missing field": o => { delete o.records.age; },
+    "an impossible eye count": o => { o.creatures[0].g.eyes = sim.MAX_EYES + 1; },
+    "a third plant colour": o => { o.toxic = 2; },
+    "a species descended from itself": o => { o.species[0].parentId = o.species[0].id; },
+    "a grid that isn't base64": o => { o.plant = "%%%%"; },
+  };
+  for (const [what, f] of Object.entries(bad)) assert.throws(() => sim.deserialize(edit(f)), /damaged/, what);
+  assert.equal(sim.deserialize(JSON.parse(text)).tick, w.tick, "the untouched file still loads");
+});
+
 /* ---------- reproduction ---------- */
 
 test("a child of two parents inherits whole neurons from each", () => {

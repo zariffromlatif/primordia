@@ -943,17 +943,59 @@ function startPlague(w,x,y,message){
 
 /* A snapshot is plain JSON. It holds everything that can't be worked out again, including the
    random generator's state, so a loaded world continues exactly as the saved one would have. */
-const SNAPSHOT_VERSION=2;
-const WORLD_KEYS=["seed","rs","tick","season","wind","storms","terrVer","hydroVer","nextId","maxGen","events","eventCount","history",
-  "nextSpecies","hueBase","climate","plagueActive","callingLogged","pairsLogged","eyeLog","lastCarnArrival","hadCarn","lowHerbLogged",
-  "lastConvertLog","births","pairBirths","deaths","lastBirths","lastPairBirths","records",
-  "toxic","poisonFlips","know","mind","calls","mindHistory","learnStart","learnUpLogged","learnDownLogged",
-  "sel","selection","selTrend","struggle","ornStart","ornLogged","fedLogged","deathsNoKids","deathsAll"];
-const CREATURE_KEYS=["id","x","y","a","gen","age","kids","kills","cool","rest","wait","v","sigA","sigB","mem","sick","immune","dead","cause",
-  "sp","parentId","mateId","e","maxAge","pred","pb","surprise","fear","rBar","mood","ePrev","poisoned","poisonType","bites","mates","fed"];
+const SNAPSHOT_VERSION=2,DAMAGED="This island file is damaged.";
+
+/* What every field of a snapshot must hold. A file is checked against this before anything is
+   loaded from it, so a damaged or hand-edited file is refused instead of breaking the page.
+   "n" is a number, "i" a whole number, "b" true or false, "s" a string, [x] a list of x,
+   {"*":x} an object whose every value is x, and a function decides for itself. */
+function fits(v,s){
+  if(typeof s==="function")return s(v);
+  if(s==="n")return Number.isFinite(v);
+  if(s==="i")return Number.isInteger(v);
+  if(s==="b")return v===true||v===false;
+  if(s==="s")return typeof v==="string";
+  if(Array.isArray(s))return Array.isArray(v)&&v.every(x=>fits(x,s[0]));
+  if(!v||typeof v!=="object"||Array.isArray(v))return false;
+  if("*" in s)return Object.values(v).every(x=>fits(x,s["*"]));
+  for(const k in s)if(!fits(v[k],s[k]))return false;
+  return true;
+}
+const nums=keys=>Object.fromEntries(keys.split(" ").map(k=>[k,"n"]));
+const orNull=s=>v=>v===null||fits(v,s);
+const listOf=(n,s)=>v=>Array.isArray(v)&&v.length===n&&v.every(x=>fits(x,s));
+const oneOf=(...ok)=>v=>ok.includes(v);
+const RECORD={v:"n",who:"s"},TRAITS=nums(SEL_TRAITS.map(t=>t.k).join(" "));
+const WORLD_SHAPE={
+  seed:"i",rs:"i",tick:"i",season:"n",wind:"n",storms:[nums("x y r vx vy age life p")],terrVer:"n",hydroVer:"n",nextId:"i",maxGen:"n",
+  events:[{t:"n",text:"s"}],eventCount:"n",history:[Object.assign(nums("h c p b pb"),{sp:{"*":"n"}})],
+  nextSpecies:"i",hueBase:"n",climate:orNull({kind:"s",label:"s",mul:"n",until:"n",end:"s"}),
+  plagueActive:"b",callingLogged:"b",pairsLogged:"b",eyeLog:"b",lastCarnArrival:"n",hadCarn:"b",lowHerbLogged:"b",
+  lastConvertLog:"n",births:"n",pairBirths:"n",deaths:"n",lastBirths:"n",lastPairBirths:"n",records:{age:RECORD,kids:RECORD,kills:RECORD,gen:RECORD},
+  toxic:oneOf(0,1),poisonFlips:"n",know:"n",
+  mind:Object.assign(nums("n threat food calmN calmSpeed"),{calls:listOf(2,nums("n threat food hearN hearSpeed"))}),
+  calls:listOf(2,Object.assign(nums("freq danger food listen samples pendingN"),{meaning:orNull("s"),heardLogged:"b",pending:orNull("s")})),
+  mindHistory:[nums("learn surp know a b")],learnStart:"n",learnUpLogged:"b",learnDownLogged:"b",
+  sel:{births:"n",popN:"n",par:TRAITS,pop:TRAITS,sq:TRAITS},selection:orNull({"*":{s:"n",mean:"n"}}),selTrend:{"*":nums("dir n last")},
+  struggle:orNull("n"),ornStart:"n",ornLogged:"b",fedLogged:"b",deathsNoKids:"n",deathsAll:"n"};
+const CREATURE_SHAPE={id:"i",x:"n",y:"n",a:"n",gen:"n",age:"n",kids:"n",kills:"n",cool:"n",rest:"n",wait:"n",v:"n",sigA:"n",sigB:"n",mem:"n",
+  sick:"n",immune:"b",dead:"b",cause:"s",sp:"i",parentId:"i",mateId:"i",e:"n",maxAge:"n",pred:"n",pb:"n",surprise:"n",fear:"n",rBar:"n",mood:"n",
+  ePrev:"n",poisoned:"n",poisonType:oneOf(0,1),bites:"n",mates:"n",fed:"b"};
+const WORLD_KEYS=Object.keys(WORLD_SHAPE),CREATURE_KEYS=Object.keys(CREATURE_SHAPE);
 const CREATURE_ARRAYS=["val","pw","prevHid"];
 const GRIDS=["height","fnoise","plant","fast","base","moist"];
 const BRAIN=[["w1",NI*NH],["b1",NH],["w2",NO*NH],["b2",NO]];
+const SNAPSHOT_SHAPE=Object.assign({},WORLD_SHAPE,Object.fromEntries(GRIDS.map(k=>[k,"s"])),{
+  creatures:[Object.assign({},CREATURE_SHAPE,{brain:"s",val:listOf(2,"n"),pw:listOf(NH,"n"),prevHid:listOf(NH,"n"),
+    g:Object.assign(nums("size speed sense diet mut fov learn taste orn pref"),{eyes:v=>Number.isInteger(v)&&v>=1&&v<=MAX_EYES})})],
+  species:[{id:"i",genus:"s",name:"s",hue:"n",repG:nums("size speed sense diet eyes fov"),repW:"s",count:"n",peak:"n",born:"n",died:"n",
+    parentId:"i",parentName:"s",announced:"b",extinct:"b",diet:"n"}]});
+
+function checkSnapshot(o){
+  if(!fits(o,SNAPSHOT_SHAPE)
+    ||!o.species.every(s=>s.parentId>=0&&s.parentId<s.id&&s.id<o.nextSpecies) // species are numbered as they appear, so the family tree can't loop
+    ||!o.creatures.every(c=>c.id<o.nextId))throw new Error(DAMAGED);
+}
 
 function toB64(a){
   const u=new Uint8Array(a.buffer,a.byteOffset,a.byteLength);let s="";
@@ -961,7 +1003,8 @@ function toB64(a){
   return btoa(s);
 }
 function fromB64(s,n){
-  const bin=atob(s);if(bin.length!==n*4)throw new Error("This island file is damaged.");
+  let bin="";try{bin=atob(s);}catch(e){/* not base64 */}
+  if(bin.length!==n*4)throw new Error(DAMAGED);
   const u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);
   return new Float32Array(u.buffer);
 }
@@ -982,10 +1025,11 @@ function serialize(w){
 function deserialize(o){
   if(!o||o.format!=="primordia")throw new Error("This file is not a saved Primordia island.");
   if(o.version!==SNAPSHOT_VERSION)throw new Error(`This island was saved in format ${o.version}, but this version of Primordia reads format ${SNAPSHOT_VERSION}.`);
+  checkSnapshot(o);
   const N=G*G;
   const w=initWorld(o.seed,fromB64(o.height,N),fromB64(o.fnoise,N));
   for(const k of GRIDS.slice(2))w[k].set(fromB64(o[k],N));
-  for(const k of WORLD_KEYS)if(k in o)w[k]=o[k];
+  for(const k of WORLD_KEYS)w[k]=o[k];
   route(w);
   updateWater(w);
   for(const s of o.species){s.repW=fromB64(s.repW,NI*NH+NO*NH);w.species.set(s.id,s);}

@@ -72,7 +72,7 @@ Either way, the child's genes and brain weights are then mutated by an amount se
 
 **Plague** spreads on contact, costs energy, slows its host and lasts 700 ticks. Hunters can catch it from sick prey. Survivors are immune for life, but their children aren't.
 
-**Snapshots** are plain JSON (format 2) holding everything that can't be worked out again, including what every creature has learned and the island's running measurements: the terrain heights, plants, water and soil grids, every creature and its brain, every species, the log, and the random generator's state. Drainage, lakes and terrain types are rebuilt on load, so a loaded island carries on exactly as the saved one would have.
+**Snapshots** are plain JSON (format 2) holding everything that can't be worked out again, including what every creature has learned and the island's running measurements: the terrain heights, plants, water and soil grids, every creature and its brain, every species, the log, and the random generator's state. Drainage, lakes and terrain types are rebuilt on load, so a loaded island carries on exactly as the saved one would have. Every field is checked before anything is loaded, so a damaged or hand-edited file is refused instead of breaking the page.
 
 **The worker** owns the world and answers messages from the page. Every animation frame the page asks for the next frame, and the worker steps the simulation by the chosen speed (within a time budget). It replies with:
 

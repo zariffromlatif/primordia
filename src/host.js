@@ -7,16 +7,18 @@
  *
  * Page to host:  new {seed}, load {text}, frame {run, speed, budget}, tool {tool, x, y} (inspect-free tools: feed, rain,
  *                hunters, meteor, plague),
- *                select {id}, save
- * Host to page:  world {seed, tick, loaded}, frame {...}, snapshot {text, name}, error {message}
- *                (a frame carries missing {id} when a selected creature was already gone)
+ *                select {id, sp} (sp, the creature's species, is given when a species was tapped), save
+ * Host to page:  world {seed, tick, loaded}, frame {...}, snapshot {text, name}, error {message, during}
+ *                (a frame carries missing {id} when a selected creature was already gone, or replaced {id, by}
+ *                when it was gone and the newest living member of its species stood in; during is the type of
+ *                the message that failed)
  */
 const STRIDE=13; // floats per creature in a frame: id, x, y, angle, radius, hue, diet, call A, call B, sick, eyes, field of view, ornament on show
 
 function makeHost(send){
-  let w=null,sel=null,missing=0,frames=0,sent=null;
+  let w=null,sel=null,missing=0,replaced=null,frames=0,sent=null;
   const now=typeof performance!=="undefined"?()=>performance.now():()=>Date.now();
-  const reset=()=>{sel=null;missing=0;sent={terr:-1,hydro:-1,events:-1,slow:-1e9};};
+  const reset=()=>{sel=null;missing=0;replaced=null;sent={terr:-1,hydro:-1,events:-1,slow:-1e9};};
 
   function begin(nw,loaded){
     w=nw;reset();
@@ -33,10 +35,16 @@ function makeHost(send){
       inp:c.inp.slice(),hid:c.hid.slice(),out:c.out.slice(),w1:c.w1.slice(),w2:(()=>{const a=c.w2.slice();a.set(c.pw,5*NH);return a;})()};
   }
 
-  /* The slower-changing panels: species, the family tree, records and the chart's history. */
-  function panels(){
+  /* The newest living member of each species, which the panels offer for inspection. */
+  function newest(){
     const rep=new Map();
     for(const c of w.creatures){if(c.dead)continue;const b=rep.get(c.sp);if(!b||c.gen>b.gen)rep.set(c.sp,c);}
+    return rep;
+  }
+
+  /* The slower-changing panels: species, the family tree, records and the chart's history. */
+  function panels(){
+    const rep=newest();
     const species=[];
     for(const s of w.species.values())species.push({id:s.id,name:s.name,hue:s.hue,diet:s.diet,born:s.born,died:s.died,
       parentId:s.parentId,parentName:s.parentName,announced:s.announced,extinct:s.extinct,peak:s.peak,
@@ -80,6 +88,7 @@ function makeHost(send){
     if(frames-sent.slow>=10){sent.slow=frames;f.panels=panels();}
     if(sel)f.sel=detail(sel);
     if(missing){f.missing=missing;missing=0;}
+    if(replaced){f.replaced=replaced;replaced=null;}
     send(f,transfer);
   }
 
@@ -106,15 +115,20 @@ function makeHost(send){
           break;
         }
         case "select":
-          sel=null;
-          if(w&&m.id){for(const c of w.creatures)if(c.id===m.id){sel=c;break;}if(!sel)missing=m.id;}
+          sel=null;replaced=null;
+          if(w&&m.id){
+            for(const c of w.creatures)if(c.id===m.id){sel=c;break;}
+            // the panels offered this member of a species, but it died before the tap arrived
+            if(!sel&&m.sp){sel=newest().get(m.sp)||null;if(sel)replaced={id:m.id,by:sel.id};}
+            if(!sel)missing=m.id;
+          }
           break;
         case "save":
           if(w)send({type:"snapshot",text:JSON.stringify(serialize(w)),name:`primordia-island-${w.seed}-day-${days(w.tick)}.json`});
           break;
       }
     }catch(e){
-      send({type:"error",message:e&&e.message?e.message:String(e)});
+      send({type:"error",message:e&&e.message?e.message:String(e),during:m.type});
     }
   }
 

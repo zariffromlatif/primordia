@@ -69,13 +69,43 @@ test("an island saved through one host loads into another and carries on identic
   assert.deepEqual(Array.from(fb.cr), Array.from(fa.cr));
 });
 
-test("a bad file is reported, and the current island keeps running", () => {
+test("a bad or tampered file is reported, and the current island keeps running", () => {
   const { ask } = open();
   ask({ type: "new", seed: 35 });
   const [err] = ask({ type: "load", text: "{not json" });
   assert.equal(err.type, "error");
   assert.match(err.message, /not a saved Primordia island/);
+  assert.equal(err.during, "load");
+  const o = JSON.parse(ask({ type: "save" })[0].text);
+  o.records.kids.v = '<img src=x onerror="alert(1)">';
+  assert.match(ask({ type: "load", text: JSON.stringify(o) })[0].message, /damaged/);
   assert.equal(ask({ type: "frame", run: true, speed: 1 })[0].tick, 1);
+});
+
+test("a frame that fails is reported as a frame error, and the next one works", () => {
+  const { ask } = open();
+  ask({ type: "new", seed: 38 });
+  const real = globalThis.step;
+  globalThis.step = () => { throw new Error("boom"); };
+  try { assert.deepEqual(ask({ type: "frame", run: true, speed: 1 }), [{ type: "error", message: "boom", during: "frame" }]); }
+  finally { globalThis.step = real; }
+  assert.equal(ask({ type: "frame", run: true, speed: 1 })[0].tick, 1);
+});
+
+test("tapping a species whose offered member has died shows another living member", () => {
+  const { ask } = open();
+  ask({ type: "new", seed: 39 });
+  const [f] = ask({ type: "frame", run: true, speed: 1 });
+  const sp = f.panels.species.find(s => s.n > 0);
+  ask({ type: "select", id: 999999, sp: sp.id });
+  const [g] = ask({ type: "frame", run: false });
+  assert.deepEqual(g.replaced, { id: 999999, by: g.sel.id });
+  assert.equal(g.sel.name, sp.name);
+  assert.equal(g.sel.dead, false);
+  assert.equal(g.missing, undefined);
+  assert.equal(ask({ type: "frame", run: false })[0].replaced, undefined, "a stand-in is reported once");
+  ask({ type: "select", id: 999999, sp: 99999 });
+  assert.equal(ask({ type: "frame", run: false })[0].missing, 999999, "with nobody left in the species, the creature is reported missing");
 });
 
 test("frames carry both calls, ornaments, the poison and the mind and selection panels", () => {
