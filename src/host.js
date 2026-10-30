@@ -5,31 +5,31 @@
  * available, for example when index.html is opened straight from disk, the page runs it itself.
  * Depends on globals from src/sim.js.
  *
- * Page to host:  new {seed}, load {text}, frame {run, speed, budget}, tool {tool, x, y} (inspect-free tools: feed, rain,
- *                hunters, meteor, plague),
+ * Page to host:  new {seed, actions}, load {text}, frame {run, speed, budget}, tool {tool, x, y} (inspect-free tools:
+ *                feed, rain, hunters, meteor, plague),
  *                select {id, sp} (sp, the creature's species, is given when a species was tapped), save
- * Host to page:  world {seed, tick, loaded}, frame {...}, snapshot {text, name}, error {message, during}
- *                (a frame carries missing {id} when a selected creature was already gone, or replaced {id, by}
- *                when it was gone and the newest living member of its species stood in; during is the type of
- *                the message that failed)
+ * Host to page:  world {seed, tick, loaded, actions, replayable}, frame {...}, snapshot {text, name}, error {message, during}
+ *                (a frame carries actions after a tool is used, so the page can update its link; missing {id} when
+ *                a selected creature was already gone, or replaced {id, by} when it was gone and the newest living
+ *                member of its species stood in; during is the type of the message that failed)
  */
 const STRIDE=13; // floats per creature in a frame: id, x, y, angle, radius, hue, diet, call A, call B, sick, eyes, field of view, ornament on show
 
 function makeHost(send){
   let w=null,sel=null,missing=0,replaced=null,frames=0,sent=null;
   const now=typeof performance!=="undefined"?()=>performance.now():()=>Date.now();
-  const reset=()=>{sel=null;missing=0;replaced=null;sent={terr:-1,hydro:-1,events:-1,slow:-1e9};};
+  const reset=()=>{sel=null;missing=0;replaced=null;sent={terr:-1,hydro:-1,events:-1,slow:-1e9,actions:false};};
 
   function begin(nw,loaded){
     w=nw;reset();
-    send({type:"world",seed:w.seed,tick:w.tick,loaded:!!loaded});
+    send({type:"world",seed:w.seed,tick:w.tick,loaded:!!loaded,actions:w.actions.slice(),replayable:w.replayable});
   }
 
   function detail(c){
     const sp=w.species.get(c.sp);
     return{id:c.id,x:c.x,y:c.y,a:c.a,r:c.r,dead:c.dead,cause:c.cause,name:sp?sp.name:"Unknown",hue:sp?sp.hue:0,
-      gen:c.gen,e:c.e,maxE:c.maxE,age:c.age,kids:c.kids,kills:c.kills,mates:c.mates,sick:c.sick,immune:c.immune,sigA:c.sigA,sigB:c.sigB,v:c.v,
-      parentId:c.parentId,mateId:c.mateId,g:Object.assign({},c.g),
+      gen:c.gen,e:c.e,maxE:c.maxE,h:c.h,age:c.age,kids:c.kids,kills:c.kills,mates:c.mates,sick:c.sick,immune:c.immune,sigA:c.sigA,sigB:c.sigB,v:c.v,
+      parentId:c.parentId,mateId:c.mateId,drinking:w.water[cellOf(c.x,c.y)]>0,g:Object.assign({},c.g),
       val:Array.from(c.val),surprise:c.surprise,fear:c.fear,mood:c.mood,pred:c.pred,poisoned:c.poisoned,fed:c.fed,
       // the danger predictor's wiring is learned, so the diagram shows what it has become
       inp:c.inp.slice(),hid:c.hid.slice(),out:c.out.slice(),w1:c.w1.slice(),w2:(()=>{const a=c.w2.slice();a.set(c.pw,5*NH);return a;})()};
@@ -86,6 +86,7 @@ function makeHost(send){
     }
     if(w.eventCount!==sent.events){sent.events=w.eventCount;f.events=w.events.slice(0,10);}
     if(frames-sent.slow>=10){sent.slow=frames;f.panels=panels();}
+    if(sent.actions){sent.actions=false;f.actions=w.actions.slice();}
     if(sel)f.sel=detail(sel);
     if(missing){f.missing=missing;missing=0;}
     if(replaced){f.replaced=replaced;replaced=null;}
@@ -95,7 +96,7 @@ function makeHost(send){
   function handle(m){
     try{
       switch(m.type){
-        case "new":begin(makeWorld(m.seed));break;
+        case "new":begin(makeWorld(m.seed,m.actions));break;
         case "load":{
           let o;
           try{o=JSON.parse(m.text);}catch(e){throw new Error("This file is not a saved Primordia island.");}
@@ -104,14 +105,8 @@ function makeHost(send){
         }
         case "frame":if(w)frame(m);break;
         case "tool":{
-          if(!w)break;
-          const {x,y}=m;
-          if(m.tool==="feed")feedCreature(w,x,y);
-          else if(m.tool==="rain")rain(w,x,y);
-          else if(m.tool==="hunters")dropHunters(w,x,y);
-          else if(m.tool==="meteor")meteor(w,x,y);
-          else if(m.tool==="plague")startPlague(w,x,y);
-          census(w);sent.slow=-1e9;
+          if(!w||!act(w,m.tool,m.x,m.y))break;
+          census(w);sent.slow=-1e9;sent.actions=true;
           break;
         }
         case "select":

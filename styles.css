@@ -1,6 +1,6 @@
 :root{
   --bg:#ECF0F3;--surface:#FBFCFD;--ink:#16202B;--muted:#5A6676;--line:#D2D9E1;
-  --accent:#2B54C6;--on-accent:#FFFFFF;--pos:#2B6FD6;--neg:#D2483D;--herb:#3A8A55;--carn:#C9433A;--plant:#A7B977;
+  --accent:#2B54C6;--on-accent:#FFFFFF;--pos:#2B6FD6;--neg:#D2483D;--herb:#3A8A55;--carn:#C9433A;--plant:#A7B977;--water:#3478C0;
   color-scheme:light;
   box-sizing:border-box;
   padding-top:env(safe-area-inset-top,0px);
@@ -9,13 +9,13 @@
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]){
     --bg:#101722;--surface:#172030;--ink:#E2E8EF;--muted:#93A1B3;--line:#273347;
-    --accent:#8EAAFF;--on-accent:#0E1730;--pos:#6E9BFF;--neg:#FF7A6B;--herb:#6CC48B;--carn:#FF7C6E;--plant:#6F8450;
+    --accent:#8EAAFF;--on-accent:#0E1730;--pos:#6E9BFF;--neg:#FF7A6B;--herb:#6CC48B;--carn:#FF7C6E;--plant:#6F8450;--water:#6FA8E8;
     color-scheme:dark;
   }
 }
 :root[data-theme="dark"]{
   --bg:#101722;--surface:#172030;--ink:#E2E8EF;--muted:#93A1B3;--line:#273347;
-  --accent:#8EAAFF;--on-accent:#0E1730;--pos:#6E9BFF;--neg:#FF7A6B;--herb:#6CC48B;--carn:#FF7C6E;--plant:#6F8450;
+  --accent:#8EAAFF;--on-accent:#0E1730;--pos:#6E9BFF;--neg:#FF7A6B;--herb:#6CC48B;--carn:#FF7C6E;--plant:#6F8450;--water:#6FA8E8;
   color-scheme:dark;
 }
 html{scroll-padding-top:env(safe-area-inset-top,0px);}
@@ -56,7 +56,7 @@ h3{font-size:.95rem;font-weight:700;margin:18px 0 8px;}
 .sw.tri{border-radius:4px;clip-path:polygon(50% 0,100% 100%,0 100%);}
 .ghost{background:transparent;padding:6px 12px;min-height:34px;font-size:.85rem;}
 .status{margin:12px 0 0;font-weight:600;}
-.meter{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;margin-top:12px;font-size:.85rem;color:var(--muted);}
+.meter{display:grid;grid-template-columns:auto 1fr auto;gap:8px 10px;align-items:center;margin-top:12px;font-size:.85rem;color:var(--muted);}
 .bar{height:8px;background:var(--line);border-radius:99px;overflow:hidden;}
 .bar i{display:block;height:100%;background:var(--herb);border-radius:99px;}
 .meter em{font-style:normal;font-variant-numeric:tabular-nums;min-width:3ch;text-align:right;}

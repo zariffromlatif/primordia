@@ -147,6 +147,9 @@ test("loading refuses a file with fields of the wrong kind, so an edited file ca
     "a third plant colour": o => { o.toxic = 2; },
     "a species descended from itself": o => { o.species[0].parentId = o.species[0].id; },
     "a grid that isn't base64": o => { o.plant = "%%%%"; },
+    "an action with an unknown tool": o => { o.actions = [{ t: 5, tool: "flood", x: 1, y: 1 }]; o.next = 1; },
+    "a replay that has run past its record": o => { o.next = o.actions.length + 1; },
+    "a format 2 file with no creature list": o => { o.version = 2; o.creatures = "none"; },
   };
   for (const [what, f] of Object.entries(bad)) assert.throws(() => sim.deserialize(edit(f)), /damaged/, what);
   assert.equal(sim.deserialize(JSON.parse(text)).tick, w.tick, "the untouched file still loads");
@@ -198,7 +201,7 @@ test("a creature only sees through the eyes it has", () => {
   for (let i = 0; i < 5; i++) sim.step(w);
   for (const c of alive(w)) {
     if (c.g.eyes !== 2) continue;
-    for (let i = 6; i < sim.IE; i++) assert.equal(c.inp[i], 0, `input ${i} of a two-eyed creature`);
+    for (let i = 2 * sim.PER_EYE; i < sim.IE; i++) assert.equal(c.inp[i], 0, `input ${i} of a two-eyed creature`);
   }
 });
 
@@ -417,4 +420,131 @@ test("everything learned and measured survives a save and load", () => {
   assert.equal(back.toxic, w.toxic);
   assert.deepEqual(back.calls, w.calls);
   assert.deepEqual(Array.from(back.ptype), Array.from(w.ptype));
+});
+
+/* ---------- recorded actions ---------- */
+
+test("a seed and its recorded actions replay exactly the same history", () => {
+  const a = sim.makeWorld(51);
+  for (let i = 0; i < 300; i++) sim.step(a);
+  assert.ok(sim.act(a, "meteor", 500.4, 499.6));
+  for (let i = 0; i < 200; i++) sim.step(a);
+  sim.act(a, "rain", 300, 300);
+  sim.act(a, "hunters", 600, 400);
+  const c = alive(a)[0];
+  sim.act(a, "feed", c.x, c.y);
+  for (let i = 0; i < 700; i++) sim.step(a);
+  assert.deepEqual(a.actions.map(x => [x.t, x.tool]), [[300, "meteor"], [500, "rain"], [500, "hunters"], [500, "feed"]]);
+  assert.deepEqual([a.actions[0].x, a.actions[0].y], [500, 500], "positions are rounded");
+  const b = sim.makeWorld(51, sim.decodeActions(sim.encodeActions(a.actions)));
+  for (let i = 0; i < 1200; i++) sim.step(b);
+  assert.equal(b.next, 4);
+  assert.ok(snap(a) === snap(b), "the replayed island diverged");
+});
+
+test("acting during a replay drops the actions still to come", () => {
+  const w = sim.makeWorld(52, [{ t: 100, tool: "meteor", x: 500, y: 500 }, { t: 900, tool: "rain", x: 200, y: 200 }]);
+  for (let i = 0; i < 200; i++) sim.step(w);
+  assert.equal(w.next, 1);
+  sim.act(w, "plague", 400, 400);
+  assert.deepEqual(w.actions.map(x => x.tool), ["meteor", "plague"]);
+  assert.equal(w.next, 2);
+});
+
+test("actions survive a trip through a link, and junk is ignored", () => {
+  const list = [{ t: 0, tool: "rain", x: 0, y: 1023 }, { t: 5000, tool: "meteor", x: 512, y: 300 }, { t: 6000, tool: "feed", x: 7, y: 8 }];
+  assert.equal(sim.encodeActions(list), "/r0.0.1023/m5000.512.300/f6000.7.8");
+  assert.deepEqual(sim.decodeActions("/m5000.512.300/x1.2.3/f6000.7.8/r0.0.1023/p9.9999.4"),
+    [list[0], { t: 9, tool: "plague", x: 1023, y: 4 }, list[1], list[2]]);
+  assert.equal(sim.act(sim.makeWorld(1), "flood", 1, 1), false);
+  assert.equal(sim.makeWorld(1, [{ t: -1, tool: "rain", x: 1, y: 1 }, { t: 3, tool: "__proto__", x: 1, y: 1 }]).actions.length, 0);
+});
+
+/* ---------- thirst ---------- */
+
+function cellWhere(w, ok) {
+  for (let k = 0; k < sim.G * sim.G; k++) if (ok(k)) return { k, x: (k % sim.G + 0.5) * sim.CELL, y: (Math.floor(k / sim.G) + 0.5) * sim.CELL };
+  throw new Error("no such cell");
+}
+
+test("creatures drink at rivers and dry out away from water", () => {
+  const w = sim.makeWorld(53);
+  const river = cellWhere(w, k => w.water[k] > 60 && w.water[k] < 255);
+  const dry = cellWhere(w, k => w.terr[k] === sim.GRASS && w.water[k] === 0 && w.moist[k] < 0.8);
+  const [a, b] = alive(w);
+  w.creatures = [a, b];
+  Object.assign(a, { x: river.x, y: river.y, h: 0.5 });
+  Object.assign(b, { x: dry.x, y: dry.y, h: 0.5 });
+  w.plant[dry.k] = 0; // nothing juicy to eat there
+  sim.step(w);
+  assert.ok(a.h > 0.5, `the drinker went from 0.5 to ${a.h}`);
+  assert.ok(b.h < 0.5, `the dry one went from 0.5 to ${b.h}`);
+  assert.equal(a.inp[sim.IE + 8], 0.5, "thirst is an input");
+});
+
+test("a creature that runs dry dies of thirst, and a bad season for it is logged", () => {
+  const w = sim.makeWorld(54);
+  const dry = cellWhere(w, k => w.terr[k] === sim.GRASS && w.water[k] === 0 && w.moist[k] < 0.8);
+  const c = alive(w)[0];
+  w.creatures = [c];
+  Object.assign(c, { x: dry.x, y: dry.y, h: 0, e: 0.1 });
+  w.plant[dry.k] = 0;
+  sim.step(w);
+  assert.equal(c.cause, "Died of thirst");
+  assert.equal(w.thirstDead, 1);
+  w.tick = 499; w.thirstDead = 20;
+  sim.step(w);
+  assert.ok(w.events.some(e => e.text === "20 creatures died of thirst during the spring."));
+  assert.equal(w.thirstDead, 0, "the count starts again each season");
+});
+
+test("eyes can make out fresh water from a few cells away", () => {
+  const w = sim.makeWorld(55);
+  let near = 0;
+  for (let k = 0; k < sim.G * sim.G; k++) {
+    if (w.water[k] > 0) assert.equal(w.fresh[k], 1);
+    else if (w.fresh[k] > 0 && w.fresh[k] < 1) near++;
+  }
+  assert.ok(near > 100, `${near} cells see water nearby`);
+  for (let i = 0; i < 3; i++) sim.step(w);
+  const c = alive(w).find(c => c.g.eyes >= 1 && c.inp.some((v, i) => i < sim.IE && i % sim.PER_EYE === sim.SEE_WATER && v > 0));
+  assert.ok(c, "some creature's eyes report water");
+});
+
+/* ---------- older saves ---------- */
+
+test("an island saved in format 2, before thirst and recorded actions, still loads", () => {
+  const w = sim.makeWorld(56);
+  for (let i = 0; i < 300; i++) sim.step(w);
+  const o = sim.serialize(w), NI2 = sim.MAX_EYES * 3 + 8, IE2 = sim.MAX_EYES * 3, H = sim.NH;
+  // turn this snapshot back into what format 2 wrote: three inputs per eye, and no thirst
+  const down = v3 => {
+    const v2 = new Float32Array(v3.length - (sim.NI - NI2) * H);
+    for (let h = 0; h < H; h++) {
+      for (let e = 0; e < sim.MAX_EYES; e++) for (let t = 0; t < 3; t++) v2[h * NI2 + e * 3 + t] = v3[h * sim.NI + e * sim.PER_EYE + t];
+      for (let n = 0; n < 8; n++) v2[h * NI2 + IE2 + n] = v3[h * sim.NI + sim.IE + n];
+    }
+    v2.set(v3.subarray(sim.NI * H), NI2 * H);
+    return v2;
+  };
+  const L3 = sim.NI * H + H + sim.NO * H + sim.NO;
+  for (const c of o.creatures) { c.brain = sim.toB64(down(sim.fromB64(c.brain, L3))); delete c.h; }
+  for (const s of o.species) s.repW = sim.toB64(down(sim.fromB64(s.repW, sim.NI * H + sim.NO * H)));
+  for (const k of ["actions", "next", "replayable", "thirstDead"]) delete o[k];
+  o.version = 2;
+  const v = sim.deserialize(JSON.parse(JSON.stringify(o)));
+  assert.equal(v.replayable, false, "its link can only replay how the island began");
+  const before = w.creatures[0], after = v.creatures[0];
+  for (let h = 0; h < H; h++) {
+    for (let e = 0; e < sim.MAX_EYES; e++) {
+      for (let t = 0; t < 3; t++) assert.equal(after.w1[h * sim.NI + e * sim.PER_EYE + t], before.w1[h * sim.NI + e * sim.PER_EYE + t]);
+      assert.equal(after.w1[h * sim.NI + e * sim.PER_EYE + sim.SEE_WATER], 0, "the new water channel starts unwired");
+    }
+    for (let n = 0; n < 8; n++) assert.equal(after.w1[h * sim.NI + sim.IE + n], before.w1[h * sim.NI + sim.IE + n]);
+    assert.equal(after.w1[h * sim.NI + sim.IE + 8], 0, "so does thirst");
+  }
+  assert.deepEqual(Array.from(after.w2), Array.from(before.w2));
+  assert.equal(after.h, 1);
+  for (let i = 0; i < 300; i++) sim.step(v);
+  assert.ok(v.creatures.length > 0);
 });

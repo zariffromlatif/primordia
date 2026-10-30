@@ -1,6 +1,6 @@
 # Primordia 🧬
 
-An island where creatures with tiny neural brains graze, hunt, learn, court mates, call to each other and split into new species, evolving by Darwin's natural and sexual selection while storms roll in and rain carves rivers through the land. Nothing is scripted: every behavior you see was inherited or learned, and every brain is a mix of its parents' with a few mutations of its own.
+An island where creatures with tiny neural brains graze, hunt, learn, court mates, call to each other and split into new species, evolving by Darwin's natural and sexual selection while storms roll in, rain carves rivers through the land and thirsty herds come down to drink. Nothing is scripted: every behavior you see was inherited or learned, and every brain is a mix of its parents' with a few mutations of its own.
 
 ## Run it
 
@@ -13,7 +13,7 @@ npm test         # runs the simulation tests (Node 20+)
 
 When the page is served, the simulation runs in a Web Worker, so even a crowded island at 40× speed never stalls drawing. Browsers don't allow workers on pages opened straight from disk, so then the page runs the simulation itself. It works the same, just with a smaller time budget per frame.
 
-Every push to `main` runs the tests and deploys to GitHub Pages. Add `#island-12345` to the URL to reopen a specific island. Every random number comes from the island's own seeded generator, so the same link replays the same terrain and the same history until someone uses a tool. History is only guaranteed to match in the same browser, since browsers can round some maths functions differently.
+Every push to `main` runs the tests and deploys to GitHub Pages. Add `#island-12345` to the URL to reopen a specific island. Every random number comes from the island's own seeded generator, and every use of a tool is recorded in the link as it happens. For example, `#island-12345/m5000.512.300` adds a meteor on tick 5000 at (512, 300). So a link replays an island's whole history, including everything anyone did to it, at the same moments. Using a tool during a replay takes history somewhere new: the link keeps what has happened so far plus the new action, and drops the rest of the replay. History is only guaranteed to match in the same browser and the same version of Primordia, since browsers can round some maths functions differently.
 
 ## What you can do
 
@@ -40,6 +40,8 @@ The **family tree** shows every species as a line from the day it split off to t
 
 Both are routed downhill every 20 ticks. A channel only shows where the groundwater supply is steady, so a passing storm swells existing rivers without painting new ones across flat ground. Soil moisture rises with rain and near rivers and lakes, dries out faster in summer and on sand and rock, and drives plant growth.
 
+**Thirst** pulls creatures toward that water. A body dries out faster in hot weather, when moving fast and when it's big. Rivers and lakes refill it quickly, and puddles after heavy rain refill it slowly. Juicy plants in damp soil give a little, and the blood of a fresh kill gives a good drink. A creature low on water burns extra energy, and one that runs dry soon dies of thirst. The island log reports seasons when many creatures died of thirst.
+
 **Erosion** runs every 200 ticks. Rivers cut their beds in proportion to their flow and slope, slower through forest and much slower through rock. What they carry is dropped where the water slows down:
 
 - **In lakes**, which slowly silt up.
@@ -49,17 +51,17 @@ The terrain, lakes and drainage are recomputed after every pass, so rivers can c
 
 **Each creature** carries a genome: body size, top speed, sight range, diet (0 is pure grazer, 1 is pure hunter), mutation rate, and a body plan of how many eyes it has (1 to 6) and how wide its field of view is. The field of view is split evenly between the eyes. More eyes see the world in finer slices. Bigger and faster bodies burn more energy, every eye has a running cost, and long, wide sight cones cost more than narrow ones. Hunters can kill anything up to 15% bigger than themselves.
 
-**Each brain** is a 26 → 8 → 6 feed-forward network with tanh activations.
+**Each brain** is a 33 → 8 → 6 feed-forward network with tanh activations.
 
-| Inputs (26) | Outputs (6) |
+| Inputs (33) | Outputs (6) |
 | --- | --- |
-| Food, prey and hunters seen by each eye: 3 slots for each of up to 6 eyes, filled only for the eyes the body has (18) | Turn |
-| Energy, water ahead (sea, lakes and rivers), an internal pulse, feeling poisoned (4) | Speed |
+| Food, prey, hunters and fresh water seen by each eye: 4 slots for each of up to 6 eyes, filled only for the eyes the body has (24) | Turn |
+| Energy, water ahead (sea, lakes and rivers), an internal pulse, feeling poisoned, thirst (5) | Speed |
 | Call A heard, call B heard | Call A, call B (each costs energy) |
 | Memory, which is last tick's memory output | Memory |
 | Surprise | How dangerous it expects the next moment to be |
 
-The wiring for eyes a creature doesn't have is still inherited and still mutates, but it does nothing until a mutation adds the eye. Food is seen through what the creature has learned about it (see Minds). Calling and memory start mostly switched off. Whether they evolve depends on whether they help a lineage survive. The island log notes when calling becomes common and when it falls out of use.
+The wiring for eyes a creature doesn't have is still inherited and still mutates, but it does nothing until a mutation adds the eye. Food is seen through what the creature has learned about it (see Minds), and fresh water from up to six cells away, more clearly the closer it is. Calling and memory start mostly switched off. Whether they evolve depends on whether they help a lineage survive. The island log notes when calling becomes common and when it falls out of use.
 
 **Reproduction** is mostly sexual. A well-fed adult looks for a ready member of its own species close by:
 
@@ -72,7 +74,7 @@ Either way, the child's genes and brain weights are then mutated by an amount se
 
 **Plague** spreads on contact, costs energy, slows its host and lasts 700 ticks. Hunters can catch it from sick prey. Survivors are immune for life, but their children aren't.
 
-**Snapshots** are plain JSON (format 2) holding everything that can't be worked out again, including what every creature has learned and the island's running measurements: the terrain heights, plants, water and soil grids, every creature and its brain, every species, the log, and the random generator's state. Drainage, lakes and terrain types are rebuilt on load, so a loaded island carries on exactly as the saved one would have. Every field is checked before anything is loaded, so a damaged or hand-edited file is refused instead of breaking the page.
+**Snapshots** are plain JSON (format 3) holding everything that can't be worked out again, including what every creature has learned and the island's running measurements: the terrain heights, plants, water and soil grids, every creature and its brain, every species, the log, the recorded actions and the random generator's state. Drainage, lakes and terrain types are rebuilt on load, so a loaded island carries on exactly as the saved one would have. Every field is checked before anything is loaded, so a damaged or hand-edited file is refused instead of breaking the page. Saves in format 2, from before thirst and recorded actions, still load: the new brain inputs start unwired, every creature starts with a full drink, and since those saves recorded no actions, their link only replays how the island began.
 
 **The worker** owns the world and answers messages from the page. Every animation frame the page asks for the next frame, and the worker steps the simulation by the chosen speed (within a time budget). It replies with:
 
@@ -106,7 +108,7 @@ This section is about intelligence-like abilities, and it's deliberately careful
 
 **Learning from experience.** The island grows gold and blue plants in patches. At the start of each season there's a 50% chance that the poison switches colours, so which plant is safe can't be known at birth. Each grazer keeps a learned value for each colour, starting from an inherited "born liking" gene. Every bite nudges that value toward what happened: up for a good meal, down for poison. The grazer sees food through those values, so its instincts steer it toward plants it trusts and away from ones it doesn't, and it refuses to eat a plant it has learned is bad. This is modelled on taste-aversion learning, one of the most reliable kinds of learning in animals.
 
-Learning costs energy every tick, in proportion to the learning-rate gene, so evolution decides how much of it is worth having. In headless runs on this version, grazers fixed at a 2% learning rate kept twice the population of non-learners (144 against 67 on average) and 79% of them knew which colour was safe, against 8%. Islands where every creature starts unable to learn evolve learning from scratch within the first year and then hold it at around 0.5%, where its benefit balances its cost. Children inherit their parents' genes, not what their parents learned.
+Learning costs energy every tick, in proportion to the learning-rate gene, so evolution decides how much of it is worth having. In headless runs on this version (6 islands, 5 years each), grazers fixed at a 2% learning rate kept more than twice the population of non-learners (113 against 44 on average) and 72% of them knew which colour was safe, against 13%. Islands where every founder starts unable to learn are back to about 0.5% after the first year and settle near 0.9%, where its benefit balances its cost. Children inherit their parents' genes, not what their parents learned.
 
 **Prediction and surprise.** One output is a guess at how dangerous the next moment will be. The gap between that guess and what actually happens is the creature's surprise, which is fed back in as a sense. Learning creatures tune their guesses from experience, so surprise falls as they get better at anticipating danger. This borrows from predictive-processing theories of the brain.
 
@@ -114,7 +116,7 @@ Learning costs energy every tick, in proportion to the learning-rate gene, so ev
 
 **The inspector's inner state** shows hunger, fear, surprise, mood, learned tastes, the sense currently having the most influence on the brain, and a plain-English readout of all of that. These are translations of numbers in the simulation. They describe what a creature is doing, not what, if anything, it experiences.
 
-**What this is not.** These creatures are not conscious, and nothing here gets close to human intelligence. Each brain has at most 40 neurons. A honeybee has about a million and a human about 86 billion. Nobody knows how to build consciousness, and scientists don't agree on what it is. What Primordia can do is let you watch some of the ingredients that theories of mind point to (learning, prediction, attention and communication) evolve under pressure, and see when they don't.
+**What this is not.** These creatures are not conscious, and nothing here gets close to human intelligence. Each brain has at most 47 neurons. A honeybee has about a million and a human about 86 billion. Nobody knows how to build consciousness, and scientists don't agree on what it is. What Primordia can do is let you watch some of the ingredients that theories of mind point to (learning, prediction, attention and communication) evolve under pressure, and see when they don't.
 
 ## Project layout
 
@@ -144,8 +146,8 @@ test/host.test.js   message protocol tests
 - [x] Move the simulation into a Web Worker for bigger populations
 - [x] Rivers, rain and erosion
 - [x] Evolvable body plans (more eyes, longer sight cones)
-- [ ] Record interventions so a link can replay them too
-- [ ] Drinking: thirst that pulls creatures toward rivers and lakes
+- [x] Record interventions so a link can replay them too
+- [x] Drinking: thirst that pulls creatures toward rivers and lakes
 - [x] Mate choice, so sexual selection can shape a species
 - [x] Learning from experience, with a measured payoff
 - [x] Prediction and surprise
