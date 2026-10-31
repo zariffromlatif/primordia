@@ -82,3 +82,15 @@ test("genetic distance is zero for a creature against itself and grows between s
   assert.equal(sim.geneDistance(a, a), 0);
   assert.ok(sim.geneDistance(a, stranger) > sim.geneDistance(a, sim.makeChild(w, a)), "a child is closer than a stranger");
 });
+
+test("a pair with no readings in the final year is left out, and the verdict says so", () => {
+  const exp = { id: "t", arms: [{ label: "A" }, { label: "B" }], measures: ["apart"], islands: 7, years: 1 };
+  const days = v => Array.from({ length: sim.YEAR / X.SAMPLE }, () => [v]);
+  const series = [Array.from({ length: 7 }, () => days(0.1)), Array.from({ length: 7 }, (_, i) => days(i === 6 ? NaN : 0.9))];
+  const r = X.compare(exp, series)[0];
+  assert.deepEqual([r.higher, r.lower, r.missing], [6, 0, 1]);
+  assert.equal(r.b.toFixed(1), "0.9", "averages leave the empty island out");
+  const v = X.verdict(exp, r);
+  assert.equal(v.clear, true);
+  assert.match(v.text, /1 pair was left out because one half had lost its grazers\. On 6 of 6 pairs/);
+});

@@ -146,6 +146,8 @@ h3{font-size:.95rem;font-weight:700;margin:18px 0 8px;}
 .xp-progress .bar i{background:var(--accent);}
 .xp-chart{margin:18px 0 0;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:14px 16px 16px;}
 .xp-chart figcaption{font-weight:700;margin-bottom:6px;}
+.xp-chart figcaption small{display:block;font-weight:400;color:var(--muted);font-size:.82rem;margin-top:2px;}
+.note{margin:10px 0 6px;padding:10px 14px;border-left:3px solid var(--line);font-size:.92rem;}
 .plot{position:relative;}
 .plot svg{display:block;max-width:100%;height:auto;overflow:visible;touch-action:pan-y;}
 .plot svg:focus{outline:none;}

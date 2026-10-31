@@ -39,6 +39,9 @@ The **family tree** shows every species as a line from the day it split off to t
 | --- | --- | --- |
 | Does learning pay? | Nobody can learn | 37 grazers against 146, and 8% against 70% knowing the safe plant. 6 of 6 pairs, both times |
 | What keeps learning alive? | No poison | Learning falls to 0.63% against 1.08%. 9 of 10 pairs |
+| What happens when the sea cuts an island in two? | After a year as one island, the sea floods the middle of one twin | The halves grow apart genetically, 0.70 against 0.14, on 9 of 9 pairs (one left out because a half lost its grazers). Only 9% of grazers belong to a species living on both halves, against 75%, on 10 of 10 pairs |
+
+The isolation experiment needs reading with care. The halves of a cut island end up home to different species, but mostly because one half crashes and is recolonised by newcomers, not because one species splits in two: on half an island, lineages don't yet last long enough for that. Its twins share a seed and live the same first year tick for tick, so up to the flood they are the same island.
 
 These are Chromium's numbers; like island links, experiments give the same result every time in the same browser. The page runs several islands at once in Web Workers, or one at a time when it's opened straight from disk. Other questions were tried and left out because their twins didn't agree clearly within a few years: whether choosy mates keep ornaments large, whether hunters change the grazers, whether one eye is worse than several, and whether the island is steadier without winter. Islands with thirst kept more grazers than islands without it, on 6 of 6 pairs, but that isn't understood yet, so it isn't on the page.
 
@@ -175,7 +178,7 @@ tools/experiment.js runs the experiments headless
 - [x] Live natural-selection meter and struggle for existence
 - [x] Artificial selection tool
 - [x] Experiments: twin islands that differ in one rule, with a measured verdict
-- [ ] Archipelago islands to study speciation by geographic isolation, as with Darwin's Galápagos finches
+- [ ] Archipelago islands to study speciation by geographic isolation, as with Darwin's Galápagos finches (the isolation experiment is a first step; next, lineages that last long enough on half an island to split)
 
 ## License
 

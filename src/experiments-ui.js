@@ -66,11 +66,12 @@ function scale(max,pct){
   const raw=max/4,p=10**Math.floor(Math.log10(raw)),step=[1,2,2.5,5,10].map(k=>k*p).find(s=>s>=raw);
   return{top:Math.ceil(max/step-1e-9)*step,step};
 }
-/* The arm's average, day by day, over the days every one of its islands has reached. */
+/* The arm's average, day by day, over the days every one of its islands has reached, leaving out
+   islands with no reading that day. */
 function meanLine(arm,m){
   if(!arm.length||arm.some(days=>!days))return[];
   const n=Math.min(...arm.map(days=>days.length)),out=new Array(n);
-  for(let d=0;d<n;d++){let s=0;for(const days of arm)s+=days[d][m];out[d]=s/arm.length;}
+  for(let d=0;d<n;d++){let s=0,k=0;for(const days of arm){const v=days[d][m];if(Number.isFinite(v)){s+=v;k++;}}out[d]=k?s/k:NaN;}
   return out;
 }
 
@@ -81,7 +82,7 @@ function draw(card,f){
   for(const arm of data)for(const days of arm)if(days)for(const d of days){any=true;if(d[m]>max)max=d[m];}
   const {top,step}=scale(max*1.05,M.unit==="%");
   const X=d=>LEFT+(W-LEFT-RIGHT)*(d+1)/D,Y=v=>TOP+PLOT_H*(1-Math.min(v,top)/top);
-  const path=vals=>{let s="";for(let d=0;d<vals.length;d++)s+=(d?"L":"M")+X(d).toFixed(1)+" "+Y(vals[d]).toFixed(1);return s;};
+  const path=vals=>{let s="",pen=false;for(let d=0;d<vals.length;d++){if(!Number.isFinite(vals[d])){pen=false;continue;}s+=(pen?"L":"M")+X(d).toFixed(1)+" "+Y(vals[d]).toFixed(1);pen=true;}return s;};
   let s="";
   // the final year, which the verdict compares
   const b0=X(D-PER_YEAR-1),b1=X(D-1);
@@ -100,8 +101,8 @@ function draw(card,f){
   if(card.done){
     // each arm's final-year average across the compared band: the numbers the verdict quotes,
     // labelled where the two are far enough apart to read
-    const avg=f.means.map(ln=>{const y=ln.slice(-PER_YEAR);return y.reduce((t,v)=>t+v,0)/y.length;}),apart=Math.abs(Y(avg[0])-Y(avg[1]))>=14;
-    avg.forEach((v,a)=>{
+    const r=card.results[m],avg=[r.a,r.b],apart=Math.abs(Y(avg[0])-Y(avg[1]))>=14;
+    if(avg.every(Number.isFinite))avg.forEach((v,a)=>{
       const y=Y(v).toFixed(1);
       s+=`<path class="avg ${"ab"[a]}" d="M${b0.toFixed(1)} ${y}H${b1.toFixed(1)}"/>`;
       if(apart)s+=`<text class="val" x="${(b1+8).toFixed(1)}" y="${y}" dominant-baseline="middle">${esc(v.toFixed(M.digits)+M.unit)}</text>`;
@@ -128,7 +129,7 @@ function show(card,f,d){
     const row=document.createElement("div"),key=document.createElement("i"),val=document.createElement("b"),name=document.createElement("span");
     row.className="tip-row";key.className="key "+"ab"[a];
     const v=f.means[a]&&f.means[a][d];
-    val.textContent=v==null?"–":v.toFixed(M.digits)+M.unit;name.textContent=arm.label;
+    val.textContent=Number.isFinite(v)?v.toFixed(M.digits)+M.unit:"–";name.textContent=arm.label;
     row.append(key,val,name);tip.append(row);
   });
   tip.hidden=false;
@@ -147,10 +148,11 @@ function build(){
     const [A,B]=exp.arms;
     el.innerHTML=`<h2>${esc(exp.question)}</h2><p>${esc(exp.about)}</p>
       <ul class="arms" aria-label="The two kinds of island"><li><i class="key a"></i>${esc(A.label)} <span class="muted">(as usual)</span></li><li><i class="key b"></i>${esc(B.label)}</li></ul>
+      ${exp.note?`<p class="note">${esc(exp.note)}</p>`:""}
       <p class="muted small">${cap(NUMBERS[exp.islands]||String(exp.islands))} pairs of twins, ${exp.years} years each. The verdict compares the final year.</p>
       <div class="xp-actions"><button class="primary run">Run the experiment</button><button class="stop" hidden>Stop</button></div>
       <div class="meter xp-progress" hidden><span>Progress</span><div class="bar"><i></i></div><em></em></div>
-      ${exp.measures.map((k,m)=>`<figure class="xp-chart" data-m="${m}"><figcaption>${esc(MEASURES[k].label)}</figcaption>
+      ${exp.measures.map((k,m)=>`<figure class="xp-chart" data-m="${m}"><figcaption>${esc(MEASURES[k].label)}${MEASURES[k].about?`<small>${esc(MEASURES[k].about)}</small>`:""}</figcaption>
         <div class="plot"><svg tabindex="0" role="group" aria-label="${esc(MEASURES[k].label)} on every island, day by day. Arrow keys read each kind of island's average; the table lists every pair."></svg><div class="tip" hidden></div></div>
         <p class="verdict muted">Run the experiment to see the result.</p>
         <button class="ghost numbers" hidden aria-expanded="false">Show the numbers for each pair</button>
@@ -219,10 +221,10 @@ function stop(card,byHand){
 
 function finish(card){
   const {exp}=card;
-  card.done=true;card.stop=null;stop(card,false);
+  card.done=true;card.stop=null;card.results=compare(exp,card.data);stop(card,false);
   $(".run",card.el).textContent="Run it again";
   redraw(card);progress(card);
-  compare(exp,card.data).forEach((r,m)=>{
+  card.results.forEach((r,m)=>{
     const f=card.figs[m],v=verdict(exp,r),p=$(".verdict",f.el),b=document.createElement("b");
     b.textContent=v.clear?"Clear difference. ":"No clear difference. ";
     p.className="verdict";p.replaceChildren(b,document.createTextNode(v.text));
@@ -238,10 +240,11 @@ function table(f,exp,r){
   for(const h of["Pair",exp.arms[0].label,exp.arms[1].label,`“${exp.arms[1].label}” twin`]){const th=document.createElement("th");th.scope="col";th.textContent=h;head.append(th);}
   for(let i=0;i<exp.islands;i++){
     const a=r.ends[0][i],b=r.ends[1][i],row=body.insertRow();
-    for(const v of[`${i+1}`,fmt(a),fmt(b),b>a?"higher":b<a?"lower":"the same"])row.insertCell().textContent=v;
+    const ok=Number.isFinite(a)&&Number.isFinite(b);
+    for(const v of[`${i+1}`,Number.isFinite(a)?fmt(a):"–",Number.isFinite(b)?fmt(b):"–",!ok?"left out":b>a?"higher":b<a?"lower":"the same"])row.insertCell().textContent=v;
   }
   const foot=t.createTFoot().insertRow();
-  for(const v of["Average",fmt(r.a),fmt(r.b),""])foot.insertCell().textContent=v;
+  for(const v of[r.missing?"Average of the rest":"Average",fmt(r.a),fmt(r.b),""])foot.insertCell().textContent=v;
   $(".table-wrap",f.el).replaceChildren(t);
 }
 
