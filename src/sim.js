@@ -101,6 +101,7 @@ function initWorld(seed,height,fnoise){
     fill:new Float32Array(N),down:new Int32Array(N),order:new Int32Array(N),
     fast:new Float32Array(N),base:new Float32Array(N),flow:new Float32Array(N),steady:new Float32Array(N),moist:new Float32Array(N),water:new Uint8Array(N),fresh:new Float32Array(N),rainBuf:new Float32Array(N),acc:new Float32Array(N),
     storms:[],wind:0,terrVer:0,hydroVer:0,actions:[],next:0,replayable:true,
+    rules:{}, // an experiment's rule changes, which snapshots don't keep (see src/experiments.js)
     tick:0,season:0.5,creatures:[],nextId:1,maxGen:0,
     events:[],eventCount:0,history:[],buckets:Array.from({length:BN*BN},()=>[]),flashes:[],
     species:new Map(),nextSpecies:1,hueBase:0,spCounts:new Map(),
@@ -117,8 +118,9 @@ function initWorld(seed,height,fnoise){
   return w;
 }
 
-/* A new island from its seed, plus any recorded actions to replay as their ticks come round. */
-function makeWorld(seed,actions){
+/* A new island from its seed, plus any recorded actions to replay as their ticks come round, and
+   any rules an experiment changes: genes fixed at a value for everyone born, or poison:false. */
+function makeWorld(seed,actions,rules){
   const r=mulberry32(seed);
   const N=256,lat=new Float32Array(N*N);for(let i=0;i<lat.length;i++)lat[i]=r();
   const sm=t=>t*t*(3-2*t);
@@ -136,6 +138,7 @@ function makeWorld(seed,actions){
     start[k]=0.3+0.6*r();
   }
   const w=initWorld(seed,height,fnoise);
+  w.rules=rules||{};
   w.hueBase=r()*360;
   w.wind=r()*Math.PI*2;
   for(let k=0;k<G*G;k++){w.plant[k]=w.fert[k]*start[k];w.moist[k]=w.terr[k]<=SHALLOW?1:0.5;}
@@ -365,6 +368,7 @@ function shell(g,brain){
 }
 
 function makeCreature(w,x,y,g,brain,gen,parent,energy){
+  if(w.rules.genes)Object.assign(g,w.rules.genes); // an experiment can fix a gene for everyone
   const c=shell(g,brain);
   c.id=w.nextId++;c.x=x;c.y=y;c.a=rnd(w)*Math.PI*2;c.gen=gen;
   c.sp=parent?parent.sp:0;c.parentId=parent?parent.id:0;
@@ -618,7 +622,7 @@ function live(w,c,babies){
     if(c.val[pt]>-0.2){ // it won't eat a plant it has learned is bad
       const p=w.plant[k2],amt=Math.min(Math.max(0,p-ROOTS*w.fert[k2]),0.045*s);w.plant[k2]=p-amt;hy+=amt*0.04*mk; // grazing leaves the roots
       if(amt>0.005){
-        const bad=pt===w.toxic;
+        const bad=pt===w.toxic&&w.rules.poison!==false;
         if(bad){c.e-=amt*22*eff*0.9;c.poisoned=40;c.poisonType=pt;}else c.e+=amt*22*eff;
         // taste learning: nudge the value of this colour toward what just happened
         if(lr>0)c.val[pt]=clamp(c.val[pt]+lr*5*((bad?-1:1)-c.val[pt]),-1,1);
@@ -888,7 +892,7 @@ function step(w){
     w.thirstDead=0;
     rollClimate(w);
     // each season, a coin flip may switch which plants are poisonous
-    if(rnd(w)<0.5){w.toxic=1-w.toxic;w.poisonFlips++;logEvent(w,`The ${PLANT_NAMES[w.toxic]} plants have turned poisonous, and the ${PLANT_NAMES[1-w.toxic]} ones are safe again.`);}
+    if(rnd(w)<0.5&&w.rules.poison!==false){w.toxic=1-w.toxic;w.poisonFlips++;logEvent(w,`The ${PLANT_NAMES[w.toxic]} plants have turned poisonous, and the ${PLANT_NAMES[1-w.toxic]} ones are safe again.`);}
   }
   const sv=warmth(t);w.season=sv;
   weather(w);

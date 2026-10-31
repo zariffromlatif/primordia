@@ -7,7 +7,8 @@
   "scripts": {
     "start": "npx --yes serve@14.2.4 .",
     "test": "node --test test/*.test.js",
-    "ecology": "node tools/ecology.js"
+    "ecology": "node tools/ecology.js",
+    "experiment": "node tools/experiment.js"
   },
   "engines": {
     "node": ">=20"

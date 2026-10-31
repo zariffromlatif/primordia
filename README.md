@@ -10,6 +10,7 @@ Open `index.html` in a browser. There's no build step.
 npm start        # serves the folder at http://localhost:3000
 npm test         # runs the simulation tests (Node 20+)
 npm run ecology  # runs 8 islands for 10 years and reports how well the ecology sustains itself
+npm run experiment  # runs the experiments headless and prints their verdicts
 ```
 
 When the page is served, the simulation runs in a Web Worker, so even a crowded island at 40× speed never stalls drawing. Browsers don't allow workers on pages opened straight from disk, so then the page runs the simulation itself. It works the same, just with a smaller time budget per frame.
@@ -29,6 +30,17 @@ Every push to `main` runs the tests and deploys to GitHub Pages. Add `#island-12
 | Save / Load | Downloads the island as a JSON file. Loading it, or dropping it onto the map, carries on from exactly that moment |
 
 The **family tree** shows every species as a line from the day it split off to today or to its extinction, joined to the species it came from. By default it shows only lineages still alive and their ancestors. Tap a living species to inspect one of its members.
+
+## Experiments
+
+`experiments.html`, linked from the island page, asks questions by running **twin islands**. Twins share a seed, so they rise from the sea with the same terrain and the same founders, and differ in just one rule. Islands vary a lot on their own, so one pair would prove little: each experiment runs several pairs and counts how many came out the same way. A difference counts as clear only when chance alone would produce that much agreement less than 1 time in 20, which is a two-sided sign test. Each chart shows every island faintly and each side's average in bold, the shaded final year is what the verdict compares, and a table lists every pair.
+
+| Question | The one rule that differs | Result, over the final year |
+| --- | --- | --- |
+| Does learning pay? | Nobody can learn | 37 grazers against 146, and 8% against 70% knowing the safe plant. 6 of 6 pairs, both times |
+| What keeps learning alive? | No poison | Learning falls to 0.63% against 1.08%. 9 of 10 pairs |
+
+These are Chromium's numbers; like island links, experiments give the same result every time in the same browser. The page runs several islands at once in Web Workers, or one at a time when it's opened straight from disk. Other questions were tried and left out because their twins didn't agree clearly within a few years: whether choosy mates keep ornaments large, whether hunters change the grazers, whether one eye is worse than several, and whether the island is steadier without winter. Islands with thirst kept more grazers than islands without it, on 6 of 6 pairs, but that isn't understood yet, so it isn't on the page.
 
 ## How it works
 
@@ -123,14 +135,20 @@ Learning costs energy every tick, in proportion to the learning-rate gene, so ev
 
 ```
 index.html          markup
+experiments.html    the experiments page
 styles.css          light and dark themes
 src/sim.js          simulation core (no DOM, runs in Node, a worker or the page)
 src/host.js         owns a world and talks to the page in messages
 src/worker.js       runs the host in a Web Worker
 src/ui.js           rendering, camera, tools, panels, family tree
+src/experiments.js  the experiments, their twin islands and their verdicts (no DOM)
+src/lab.js          runs experiment islands in a Web Worker
+src/experiments-ui.js  the experiments page: runs, charts, tables
 test/sim.test.js    simulation tests
 test/host.test.js   message protocol tests
+test/experiments.test.js  experiment rules, runs and verdicts
 tools/ecology.js    ecology report: do hunters hold on, and how often do grazers nearly die out?
+tools/experiment.js runs the experiments headless
 .github/workflows   CI tests and GitHub Pages deploy
 ```
 
@@ -156,6 +174,7 @@ tools/ecology.js    ecology report: do hunters hold on, and how often do grazers
 - [x] Two calls, with measured meaning and comprehension
 - [x] Live natural-selection meter and struggle for existence
 - [x] Artificial selection tool
+- [x] Experiments: twin islands that differ in one rule, with a measured verdict
 - [ ] Archipelago islands to study speciation by geographic isolation, as with Darwin's Galápagos finches
 
 ## License
