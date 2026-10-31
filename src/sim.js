@@ -119,8 +119,10 @@ function initWorld(seed,height,fnoise){
 }
 
 /* A new island from its seed, plus any recorded actions to replay as their ticks come round, and
-   any rules an experiment changes: genes fixed at a value for everyone born, or poison:false. */
+   any rules an experiment changes: genes fixed at a value for everyone born; poison:false; land:"two" for two
+   long islands, west and east, joined by land; and flood, a tick on which the sea floods the land between them. */
 function makeWorld(seed,actions,rules){
+  const land=rules&&rules.land;
   const r=mulberry32(seed);
   const N=256,lat=new Float32Array(N*N);for(let i=0;i<lat.length;i++)lat[i]=r();
   const sm=t=>t*t*(3-2*t);
@@ -132,8 +134,11 @@ function makeWorld(seed,actions,rules){
   const fbm=(x,y)=>{let s=0,amp=0.5,f=1,n=0;for(let o=0;o<5;o++){s+=amp*noise(x*f+ox+o*31.7,y*f+oy+o*17.3);n+=amp;amp*=0.5;f*=2;}return s/n;};
   const height=new Float32Array(G*G),fnoise=new Float32Array(G*G),start=new Float32Array(G*G);
   for(let j=0;j<G;j++)for(let i=0;i<G;i++){
-    const k=j*G+i,nx=(i+0.5)/G,ny=(j+0.5)/G,dx=nx-0.5,dy=ny-0.5,d=Math.sqrt(dx*dx+dy*dy)*2;
-    height[k]=fbm(nx*3.4,ny*3.4)*1.15-d*d*0.46+0.1;
+    const k=j*G+i,nx=(i+0.5)/G,ny=(j+0.5)/G,dx=nx-0.5,dy=ny-0.5;
+    const d=land?Math.min(Math.hypot((nx-0.29)/0.19,dy/0.5),Math.hypot((nx-0.71)/0.19,dy/0.5)):Math.sqrt(dx*dx+dy*dy)*2;
+    let h=fbm(nx*3.4,ny*3.4)*1.15-d*d*0.46+0.1;
+    if(land&&Math.abs(dx)<0.045&&Math.abs(dy)<0.38)h=Math.max(h,0.46); // the land that joins them, which a flood can take
+    height[k]=h;
     fnoise[k]=0.7+0.6*r();
     start[k]=0.3+0.6*r();
   }
@@ -452,6 +457,8 @@ function newSpecies(w,rep,parent){
 }
 
 function brainVec(c){const v=new Float32Array(NI*NH+NO*NH);v.set(c.w1,0);v.set(c.w2,NI*NH);return v;}
+/* How far apart two creatures are genetically, on the same scale as SPECIES_GAP. */
+function geneDistance(a,b){return distTo(a,{repG:b.g,repW:brainVec(b)});}
 
 /* Body genes plus the mean difference between brain weights. Only the eyes both sides
    actually have are compared, since the wiring of a missing eye drifts without consequence. */
@@ -896,6 +903,7 @@ function step(w){
   }
   const sv=warmth(t);w.season=sv;
   weather(w);
+  if(t===w.rules.flood)flood(w);
   if(t%HYDRO_EVERY===0)hydro(w);
   if(t%ERODE_EVERY===0)erode(w);
   const grow=0.0031*(0.28+0.72*sv)*(w.climate?w.climate.mul:1);
@@ -942,6 +950,13 @@ function step(w){
 }
 
 /* ---------------- interventions ---------------- */
+
+/* The sea floods the land between the two islands and cuts them apart. */
+function flood(w){
+  for(let j=0;j<G;j++)for(let i=0;i<G;i++)if(Math.abs((i+0.5)/G-0.5)<0.045){const k=j*G+i;w.height[k]=Math.min(w.height[k],0.26);}
+  reshape(w);
+  logEvent(w,"The sea rose and flooded the middle of the island. Its creatures are now split between two islands.");
+}
 
 function meteor(w,x,y){
   if(x===undefined){const p=randomLand(w);x=p.x;y=p.y;}
@@ -1160,7 +1175,7 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     W, G, CELL, NI, NH, NO, IE, MAX_EYES, PER_EYE, SEE_FOOD, SEE_PREY, SEE_HUNTER, SEE_WATER, YEAR, CAP,
     DEEP, SHALLOW, SAND, GRASS, FOREST, ROCK, SEA, SPECIES_GAP, PLAGUE_TICKS, HYDRO_EVERY, ERODE_EVERY, REST, ROOTS,
-    act, encodeActions, decodeActions, toB64, fromB64,
+    act, encodeActions, decodeActions, toB64, fromB64, geneDistance,
     makeWorld, step, census, assignSpecies, distTo, meteor, rain, dropHunters, startPlague, hydro, erode, reshape, isLake,
     makeChild, spawnGroup, nameFor, seasonOf, yearOf, days, cellOf, terrAt, plantAt, pairShare, serialize, deserialize, rnd, warmth,
     clamp, CALL_NAMES, PLANT_NAMES, SEL_TRAITS, plantKinds, analyzeMinds, sampleMinds, freshMind, avgLearn, avgTrait,

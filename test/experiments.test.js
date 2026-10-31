@@ -64,3 +64,21 @@ test("the verdict calls a difference clear only when chance alone would rarely p
   assert.equal(X.verdict(exp, most).clear, false, "5 of 6 happens by chance about 1 time in 5");
   assert.match(X.verdict(exp, most).text, /doesn't show a clear difference/);
 });
+
+test("twin islands match tick for tick until the sea floods one of them in two", () => {
+  const joined = sim.makeWorld(1001, [], { land: "two" }), flooded = sim.makeWorld(1001, [], { land: "two", flood: 300 });
+  const middle = w => { let deep = 0, n = 0; for (let j = 20; j < sim.G - 20; j++) { n++; if (w.terr[j * sim.G + sim.G / 2] === sim.DEEP) deep++; } return deep / n; };
+  assert.equal(middle(joined), 0, "the two islands start out joined by land");
+  for (let i = 0; i < 299; i++) { sim.step(joined); sim.step(flooded); }
+  assert.ok(JSON.stringify(sim.serialize(joined)) === JSON.stringify(sim.serialize(flooded)), "identical before the flood");
+  sim.step(joined); sim.step(flooded);
+  assert.equal(middle(flooded), 1, "deep sea between them after it");
+  assert.equal(middle(joined), 0);
+  assert.ok(flooded.events.some(e => e.text.includes("flooded the middle")));
+});
+
+test("genetic distance is zero for a creature against itself and grows between strangers", () => {
+  const w = sim.makeWorld(5), [a] = alive(w), stranger = alive(w).find(c => c.sp !== a.sp);
+  assert.equal(sim.geneDistance(a, a), 0);
+  assert.ok(sim.geneDistance(a, stranger) > sim.geneDistance(a, sim.makeChild(w, a)), "a child is closer than a stranger");
+});
