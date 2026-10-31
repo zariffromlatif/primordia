@@ -6,7 +6,8 @@
   "private": true,
   "scripts": {
     "start": "npx --yes serve@14.2.4 .",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "ecology": "node tools/ecology.js"
   },
   "engines": {
     "node": ">=20"

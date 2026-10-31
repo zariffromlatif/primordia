@@ -9,6 +9,7 @@ Open `index.html` in a browser. There's no build step.
 ```bash
 npm start        # serves the folder at http://localhost:3000
 npm test         # runs the simulation tests (Node 20+)
+npm run ecology  # runs 8 islands for 10 years and reports how well the ecology sustains itself
 ```
 
 When the page is served, the simulation runs in a Web Worker, so even a crowded island at 40× speed never stalls drawing. Browsers don't allow workers on pages opened straight from disk, so then the page runs the simulation itself. It works the same, just with a smaller time budget per frame.
@@ -31,7 +32,7 @@ The **family tree** shows every species as a line from the day it split off to t
 
 ## How it works
 
-**The island** is generated from fractal value noise shaped by a radial falloff. Each terrain type has its own fertility, movement cost, dryness and resistance to erosion. Plants regrow logistically, faster in summer and in damp soil. Random climate events can hit at the start of a season: summer droughts, wet spring blooms and long hard freezes. When a creature dies, its body fertilizes the ground where it fell.
+**The island** is generated from fractal value noise shaped by a radial falloff. Each terrain type has its own fertility, movement cost, dryness and resistance to erosion. Plants regrow logistically, faster in summer and in damp soil. Grazing leaves the roots: a plant can't be eaten below 15% of what its ground can grow, so grazed land grows back instead of staying bare. Random climate events can hit at the start of a season: summer droughts, wet spring blooms and long hard freezes. When a creature dies, its body fertilizes the ground where it fell.
 
 **Water** follows the terrain. A priority-flood pass visits cells from the sea upward, which gives every land cell the neighbor it drains into and fills each hollow to its spill point; the standing water above the ground is a lake. Rain falls as a light drizzle, heavier on high ground and in wet seasons, plus storms that form at random and drift with a wandering wind. The rain that falls on each cell is smoothed two ways:
 
@@ -49,7 +50,7 @@ Both are routed downhill every 20 ticks. A channel only shows where the groundwa
 
 The terrain, lakes and drainage are recomputed after every pass, so rivers can change course over the years.
 
-**Each creature** carries a genome: body size, top speed, sight range, diet (0 is pure grazer, 1 is pure hunter), mutation rate, and a body plan of how many eyes it has (1 to 6) and how wide its field of view is. The field of view is split evenly between the eyes. More eyes see the world in finer slices. Bigger and faster bodies burn more energy, every eye has a running cost, and long, wide sight cones cost more than narrow ones. Hunters can kill anything up to 15% bigger than themselves.
+**Each creature** carries a genome: body size, top speed, sight range, diet (0 is pure grazer, 1 is pure hunter), mutation rate, and a body plan of how many eyes it has (1 to 6) and how wide its field of view is. The field of view is split evenly between the eyes. More eyes see the world in finer slices. Bigger and faster bodies burn more energy, every eye has a running cost, and long, wide sight cones cost more than narrow ones. Hunters can kill anything up to 15% bigger than themselves, except hunters of their own species, newborns included.
 
 **Each brain** is a 33 → 8 → 6 feed-forward network with tanh activations.
 
@@ -108,7 +109,7 @@ This section is about intelligence-like abilities, and it's deliberately careful
 
 **Learning from experience.** The island grows gold and blue plants in patches. At the start of each season there's a 50% chance that the poison switches colours, so which plant is safe can't be known at birth. Each grazer keeps a learned value for each colour, starting from an inherited "born liking" gene. Every bite nudges that value toward what happened: up for a good meal, down for poison. The grazer sees food through those values, so its instincts steer it toward plants it trusts and away from ones it doesn't, and it refuses to eat a plant it has learned is bad. This is modelled on taste-aversion learning, one of the most reliable kinds of learning in animals.
 
-Learning costs energy every tick, in proportion to the learning-rate gene, so evolution decides how much of it is worth having. In headless runs on this version (6 islands, 5 years each), grazers fixed at a 2% learning rate kept more than twice the population of non-learners (113 against 44 on average) and 72% of them knew which colour was safe, against 13%. Islands where every founder starts unable to learn are back to about 0.5% after the first year and settle near 0.9%, where its benefit balances its cost. Children inherit their parents' genes, not what their parents learned.
+Learning costs energy every tick, in proportion to the learning-rate gene, so evolution decides how much of it is worth having. In headless runs on this version (6 islands, 5 years each), grazers fixed at a 2% learning rate kept about twice the population of non-learners (131 against 66 on average) and 76% of them knew which colour was safe, against 17%. Islands where every founder starts unable to learn are back to about 0.8% after the first year and settle near 0.9%, where its benefit balances its cost. Children inherit their parents' genes, not what their parents learned.
 
 **Prediction and surprise.** One output is a guess at how dangerous the next moment will be. The gap between that guess and what actually happens is the creature's surprise, which is fed back in as a sense. Learning creatures tune their guesses from experience, so surprise falls as they get better at anticipating danger. This borrows from predictive-processing theories of the brain.
 
@@ -129,6 +130,7 @@ src/worker.js       runs the host in a Web Worker
 src/ui.js           rendering, camera, tools, panels, family tree
 test/sim.test.js    simulation tests
 test/host.test.js   message protocol tests
+tools/ecology.js    ecology report: do hunters hold on, and how often do grazers nearly die out?
 .github/workflows   CI tests and GitHub Pages deploy
 ```
 

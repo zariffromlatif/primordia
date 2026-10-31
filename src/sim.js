@@ -26,6 +26,7 @@ const PLAGUE_TICKS=700;     // how long an infection lasts
 const CALL_NAMES=["A","B"],PLANT_NAMES=["gold","blue"];
 const MATURE=90,MATE_RANGE=26,REST=60,SELF_WAIT=200; // breeding age, how close a mate must be, pause after breeding, wait before budding alone
 const FRESH_REACH=6;        // how many cells away an eye can make out fresh water
+const ROOTS=0.15;           // grazing can't strip a plant below this share of what its ground can grow, so grazed land recovers
 
 function mulberry32(a){return function(){a|=0;a=(a+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296;};}
 function rnd(w){const a=w.rs=(w.rs+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296;}
@@ -549,7 +550,8 @@ function live(w,c,babies){
       if(c.sick>0&&o.sick===0&&!o.immune&&d<c.r+o.r+8&&rnd(w)<0.03)o.sick=PLAGUE_TICKS;
       if(o.sigA*cl>heardA)heardA=o.sigA*cl;
       if(o.sigB*cl>heardB)heardB=o.sigB*cl;
-      const smaller=o.r<c.r*1.15,threat=o.g.diet>0.5&&c.r<o.r*1.15;
+      const kin=hunter&&o.g.diet>0.5&&o.sp===c.sp; // hunters leave hunters of their own species alone, newborns included
+      const smaller=!kin&&o.r<c.r*1.15,threat=!kin&&o.g.diet>0.5&&c.r<o.r*1.15;
       if(hunter&&c.cool===0&&smaller&&d<c.r+o.r+1.5&&d<preyD){prey=o;preyD=d;}
       if(ready&&o.sp===c.sp&&o.rest===0&&o.age>MATURE&&o.e>o.maxE*0.5&&d<c.r+o.r+MATE_RANGE){const sc=mateScore(w,c,o);if(sc>mateS){mateS=sc;mate=o;}}
       if(!smaller&&!threat)continue;
@@ -614,7 +616,7 @@ function live(w,c,babies){
   if(eff>0.02){
     const pt=w.ptype[k2];
     if(c.val[pt]>-0.2){ // it won't eat a plant it has learned is bad
-      const p=w.plant[k2],amt=Math.min(p,0.045*s);w.plant[k2]=p-amt;hy+=amt*0.04*mk;
+      const p=w.plant[k2],amt=Math.min(Math.max(0,p-ROOTS*w.fert[k2]),0.045*s);w.plant[k2]=p-amt;hy+=amt*0.04*mk; // grazing leaves the roots
       if(amt>0.005){
         const bad=pt===w.toxic;
         if(bad){c.e-=amt*22*eff*0.9;c.poisoned=40;c.poisonType=pt;}else c.e+=amt*22*eff;
@@ -1153,7 +1155,7 @@ function deserialize(o){
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     W, G, CELL, NI, NH, NO, IE, MAX_EYES, PER_EYE, SEE_FOOD, SEE_PREY, SEE_HUNTER, SEE_WATER, YEAR, CAP,
-    DEEP, SHALLOW, SAND, GRASS, FOREST, ROCK, SEA, SPECIES_GAP, PLAGUE_TICKS, HYDRO_EVERY, ERODE_EVERY, REST,
+    DEEP, SHALLOW, SAND, GRASS, FOREST, ROCK, SEA, SPECIES_GAP, PLAGUE_TICKS, HYDRO_EVERY, ERODE_EVERY, REST, ROOTS,
     act, encodeActions, decodeActions, toB64, fromB64,
     makeWorld, step, census, assignSpecies, distTo, meteor, rain, dropHunters, startPlague, hydro, erode, reshape, isLake,
     makeChild, spawnGroup, nameFor, seasonOf, yearOf, days, cellOf, terrAt, plantAt, pairShare, serialize, deserialize, rnd, warmth,

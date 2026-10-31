@@ -548,3 +548,39 @@ test("an island saved in format 2, before thirst and recorded actions, still loa
   for (let i = 0; i < 300; i++) sim.step(v);
   assert.ok(v.creatures.length > 0);
 });
+
+/* ---------- ecology ---------- */
+
+test("hunters leave hunters of their own species alone, newborns included, but still eat other kinds", () => {
+  const w = sim.makeWorld(57);
+  const parent = sim.spawnGroup(w, "carn", 1, 500, 500) && w.creatures[w.creatures.length - 1];
+  const land = { x: parent.x, y: parent.y };
+  const baby = sim.makeChild(w, parent), grazer = alive(w).find(c => c.g.diet <= 0.5);
+  w.creatures = [parent, baby, grazer];
+  Object.assign(parent, { e: parent.maxE * 0.3, cool: 0, a: 0 });
+  Object.assign(baby, { x: land.x + parent.r, y: land.y, e: baby.maxE * 0.5 });
+  Object.assign(grazer, { x: land.x, y: land.y + parent.r, e: grazer.maxE * 0.5 });
+  grazer.g.size = baby.g.size = parent.g.size * 0.8; grazer.r = baby.r = parent.r * 0.8;
+  sim.step(w);
+  assert.equal(baby.dead, false, "its own newborn survives");
+  assert.equal(grazer.dead, true, "a grazer in reach is eaten");
+  assert.match(grazer.cause, /^Eaten by/);
+});
+
+test("grazing leaves the roots, so a grazed patch can grow back", () => {
+  const w = sim.makeWorld(58);
+  const c = alive(w).find(c => c.g.diet <= 0.5);
+  let k = 0;
+  while (!(w.terr[k] === sim.GRASS && w.water[k] === 0 && w.fert[k] > 0.5)) k++;
+  w.creatures = [c]; w.toxic = 1 - w.ptype[k]; c.val[w.ptype[k]] = 1;
+  for (let i = 0; i < 50; i++) {
+    Object.assign(c, { x: (k % sim.G + 0.5) * sim.CELL, y: (Math.floor(k / sim.G) + 0.5) * sim.CELL, e: c.maxE * 0.5, h: 1 });
+    sim.step(w);
+  }
+  const floor = sim.ROOTS * w.fert[k], grazed = w.plant[k];
+  assert.ok(c.bites >= 3, "it grazed there");
+  assert.ok(grazed >= floor - 1e-6 && grazed < floor + 0.02, `the plant was eaten down to ${grazed.toFixed(3)}, against a floor of ${floor.toFixed(3)}`);
+  w.creatures = [];
+  for (let i = 0; i < 200; i++) sim.step(w);
+  assert.ok(w.plant[k] > grazed, "left alone, it grows back");
+});
