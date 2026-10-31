@@ -584,3 +584,18 @@ test("grazing leaves the roots, so a grazed patch can grow back", () => {
   for (let i = 0; i < 200; i++) sim.step(w);
   assert.ok(w.plant[k] > grazed, "left alone, it grows back");
 });
+
+test("feeling poisoned wears off", () => {
+  const w = sim.makeWorld(59);
+  const { c, place } = grazerOnPlant(w, 1);
+  c.g.learn = 0; c.val[1] = 0.8; c.e = c.maxE * 0.6;
+  place(); sim.step(w);
+  assert.ok(c.poisoned > 0, "a bad bite makes it feel sick");
+  sim.step(w);
+  assert.equal(c.inp[sim.IE + 3], 1, "and its brain feels it");
+  w.creatures = [c];
+  for (let i = 0; i < 45; i++) { c.e = c.maxE * 0.6; c.x = 4; c.y = 4; sim.step(w); }
+  assert.equal(c.poisoned, 0, "the sickness wears off");
+  sim.step(w);
+  assert.equal(c.inp[sim.IE + 3], 0);
+});

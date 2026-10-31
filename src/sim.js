@@ -536,7 +536,7 @@ function assignSpecies(w){
 /* ---------------- one creature, one tick ---------------- */
 
 function live(w,c,babies){
-  c.age++;if(c.cool>0)c.cool--;if(c.rest>0)c.rest--;
+  c.age++;if(c.cool>0)c.cool--;if(c.rest>0)c.rest--;if(c.poisoned>0)c.poisoned--;
   if(c.sick>0){c.sick--;if(c.sick===0)c.immune=true;}
   const g=c.g,inp=c.inp,B=w.buckets,ne=g.eyes,half=g.fov/2,sec=g.fov/ne,ch=Math.cos(half);
   const ca=Math.cos(c.a),sa=Math.sin(c.a);
