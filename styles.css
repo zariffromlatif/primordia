@@ -178,3 +178,6 @@ h3{font-size:.95rem;font-weight:700;margin:18px 0 8px;}
 .xp th:first-child,.xp td:first-child{text-align:left;}
 .xp th{font-weight:600;color:var(--muted);}
 .xp tfoot td{font-weight:700;}
+.watch{list-style:none;padding:0;margin:14px 0 10px;display:grid;gap:8px;}
+.watch a{color:var(--accent);font-weight:700;}
+.lab code{font-size:.88em;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:1px 5px;}

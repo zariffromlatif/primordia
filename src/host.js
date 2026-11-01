@@ -5,10 +5,10 @@
  * available, for example when index.html is opened straight from disk, the page runs it itself.
  * Depends on globals from src/sim.js.
  *
- * Page to host:  new {seed, actions}, load {text}, frame {run, speed, budget}, tool {tool, x, y} (inspect-free tools:
+ * Page to host:  new {seed, actions, scenario}, load {text}, frame {run, speed, budget}, tool {tool, x, y} (inspect-free tools:
  *                feed, rain, hunters, meteor, plague),
  *                select {id, sp} (sp, the creature's species, is given when a species was tapped), save
- * Host to page:  world {seed, tick, loaded, actions, replayable}, frame {...}, snapshot {text, name}, error {message, during}
+ * Host to page:  world {seed, tick, loaded, actions, replayable, scenario}, frame {...}, snapshot {text, name}, error {message, during}
  *                (a frame carries actions after a tool is used, so the page can update its link; missing {id} when
  *                a selected creature was already gone, or replaced {id, by} when it was gone and the newest living
  *                member of its species stood in; during is the type of the message that failed)
@@ -22,7 +22,7 @@ function makeHost(send){
 
   function begin(nw,loaded){
     w=nw;reset();
-    send({type:"world",seed:w.seed,tick:w.tick,loaded:!!loaded,actions:w.actions.slice(),replayable:w.replayable});
+    send({type:"world",seed:w.seed,tick:w.tick,loaded:!!loaded,actions:w.actions.slice(),replayable:w.replayable,scenario:scenarioOf(w.rules)});
   }
 
   function detail(c){
@@ -96,7 +96,7 @@ function makeHost(send){
   function handle(m){
     try{
       switch(m.type){
-        case "new":begin(makeWorld(m.seed,m.actions));break;
+        case "new":begin(makeWorld(m.seed,m.actions,Object.hasOwn(SCENARIOS,m.scenario||"")?SCENARIOS[m.scenario]:{}));break;
         case "load":{
           let o;
           try{o=JSON.parse(m.text);}catch(e){throw new Error("This file is not a saved Primordia island.");}

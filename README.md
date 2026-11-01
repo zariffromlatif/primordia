@@ -11,11 +11,12 @@ npm start        # serves the folder at http://localhost:3000
 npm test         # runs the simulation tests (Node 20+)
 npm run ecology  # runs 8 islands for 10 years and reports how well the ecology sustains itself
 npm run experiment  # runs the experiments headless and prints their verdicts
+npm run speciation  # runs the split scenario on 20 islands and reports which become two species
 ```
 
 When the page is served, the simulation runs in a Web Worker, so even a crowded island at 40× speed never stalls drawing. Browsers don't allow workers on pages opened straight from disk, so then the page runs the simulation itself. It works the same, just with a smaller time budget per frame.
 
-Every push to `main` runs the tests and deploys to GitHub Pages. Add `#island-12345` to the URL to reopen a specific island. Every random number comes from the island's own seeded generator, and every use of a tool is recorded in the link as it happens. For example, `#island-12345/m5000.512.300` adds a meteor on tick 5000 at (512, 300). So a link replays an island's whole history, including everything anyone did to it, at the same moments. Using a tool during a replay takes history somewhere new: the link keeps what has happened so far plus the new action, and drops the rest of the replay. History is only guaranteed to match in the same browser and the same version of Primordia, since browsers can round some maths functions differently.
+Every push to `main` runs the tests and deploys to GitHub Pages. Add `#island-12345` to the URL to reopen a specific island, or `#split-12345` for the same seed as a rich island that the sea cuts in two after three years (see Experiments). Every random number comes from the island's own seeded generator, and every use of a tool is recorded in the link as it happens. For example, `#island-12345/m5000.512.300` adds a meteor on tick 5000 at (512, 300). So a link replays an island's whole history, including everything anyone did to it, at the same moments. Using a tool during a replay takes history somewhere new: the link keeps what has happened so far plus the new action, and drops the rest of the replay. History is only guaranteed to match in the same browser and the same version of Primordia, since browsers can round some maths functions differently.
 
 ## What you can do
 
@@ -41,7 +42,9 @@ The **family tree** shows every species as a line from the day it split off to t
 | What keeps learning alive? | No poison | Learning falls to 0.63% against 1.04%. 9 of 10 pairs |
 | What happens when the sea cuts an island in two? | After a year as one island, the sea floods the middle of one twin | Only 8% of grazers belong to a species living on both halves, against 55%, on 9 of 9 pairs (one left out). The halves also grow apart genetically, 0.58 against 0.22, but only 7 of 8 pairs agree (two left out because a half lost its grazers), which isn't clear |
 
-The isolation experiment needs reading with care. The halves of a cut island end up home to different species, but mostly because one half crashes and is recolonised by newcomers, not because one species splits in two: on half an island, lineages don't yet last long enough for that. Its twins share a seed and live the same first year tick for tick, so up to the flood they are the same island.
+The isolation experiment needs reading with care. The halves of a cut island end up home to different species, but mostly because one half crashes and is recolonised by newcomers, not because one species splits in two: on the usual island, lineages rarely last long enough on half of it for that. Its twins share a seed and live the same first year tick for tick, so up to the flood they are the same island.
+
+**Watch one species become two.** On a *rich* island, where plants grow back twice as fast and each bite is worth twice as much, populations are big and steady enough for one lineage to hold both halves after the sea cuts the island in two, and sometimes to split into two species, one on each side. Splits are rare, so they aren't measured with twins: `npm run speciation` follows 20 rich islands cut in two after three years, and calls a lineage split once both halves still have at least 5 of its grazers but no species of it lives on both sides. One lineage held both halves when the sea came on 16 of 20 rich islands, and it became two species on 3 of them within three years of the flood: islands 1003, 1004 and 1014 (for example *Mishidri quieta* in the west and *Mishidri parva* in the east). With the usual richness that happened on none of 20. The experiments page links to the three islands, so anyone can watch a split happen in the family tree. Only the scenario is rich; the usual island and the experiments stay as they are, since twice the creatures also takes twice as long to run.
 
 These are Chromium's numbers; like island links, experiments give the same result every time in the same browser. The page runs several islands at once in Web Workers, or one at a time when it's opened straight from disk. Other questions were tried and left out because their twins didn't agree clearly within a few years: whether choosy mates keep ornaments large, whether hunters change the grazers, whether one eye is worse than several, and whether the island is steadier without winter. Islands with thirst kept more grazers than islands without it, on 6 of 6 pairs, but that isn't understood yet, so it isn't on the page.
 
@@ -152,6 +155,7 @@ test/host.test.js   message protocol tests
 test/experiments.test.js  experiment rules, runs and verdicts
 tools/ecology.js    ecology report: do hunters hold on, and how often do grazers nearly die out?
 tools/experiment.js runs the experiments headless
+tools/speciation.js can one species become two? runs the split scenario headless
 .github/workflows   CI tests and GitHub Pages deploy
 ```
 
@@ -178,7 +182,8 @@ tools/experiment.js runs the experiments headless
 - [x] Live natural-selection meter and struggle for existence
 - [x] Artificial selection tool
 - [x] Experiments: twin islands that differ in one rule, with a measured verdict
-- [ ] Archipelago islands to study speciation by geographic isolation, as with Darwin's Galápagos finches (the isolation experiment is a first step; next, lineages that last long enough on half an island to split)
+- [x] Speciation by geographic isolation, as with Darwin's Galápagos finches: on a rich island the sea cuts in two, one species becomes two on 3 of 20 islands
+- [ ] More than two islands, and speciation on the usual island, which needs lineages that last longer
 
 ## License
 

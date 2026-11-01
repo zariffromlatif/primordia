@@ -101,7 +101,7 @@ function initWorld(seed,height,fnoise){
     fill:new Float32Array(N),down:new Int32Array(N),order:new Int32Array(N),
     fast:new Float32Array(N),base:new Float32Array(N),flow:new Float32Array(N),steady:new Float32Array(N),moist:new Float32Array(N),water:new Uint8Array(N),fresh:new Float32Array(N),rainBuf:new Float32Array(N),acc:new Float32Array(N),
     storms:[],wind:0,terrVer:0,hydroVer:0,actions:[],next:0,replayable:true,
-    rules:{}, // an experiment's rule changes, which snapshots don't keep (see src/experiments.js)
+    rules:{}, // an experiment's or a scenario's rule changes (see makeWorld)
     tick:0,season:0.5,creatures:[],nextId:1,maxGen:0,
     events:[],eventCount:0,history:[],buckets:Array.from({length:BN*BN},()=>[]),flashes:[],
     species:new Map(),nextSpecies:1,hueBase:0,spCounts:new Map(),
@@ -120,7 +120,8 @@ function initWorld(seed,height,fnoise){
 
 /* A new island from its seed, plus any recorded actions to replay as their ticks come round, and
    any rules an experiment changes: genes fixed at a value for everyone born; poison:false; land:"two" for two
-   long islands, west and east, joined by land; and flood, a tick on which the sea floods the land between them. */
+   long islands, west and east, joined by land; flood, a tick on which the sea floods the land between them;
+   and rich, how many times faster plants grow and how many times more a bite of one is worth. */
 function makeWorld(seed,actions,rules){
   const land=rules&&rules.land;
   const r=mulberry32(seed);
@@ -630,7 +631,8 @@ function live(w,c,babies){
       const p=w.plant[k2],amt=Math.min(Math.max(0,p-ROOTS*w.fert[k2]),0.045*s);w.plant[k2]=p-amt;hy+=amt*0.04*mk; // grazing leaves the roots
       if(amt>0.005){
         const bad=pt===w.toxic&&w.rules.poison!==false;
-        if(bad){c.e-=amt*22*eff*0.9;c.poisoned=40;c.poisonType=pt;}else c.e+=amt*22*eff;
+        const food=22*(w.rules.rich||1);
+        if(bad){c.e-=amt*food*eff*0.9;c.poisoned=40;c.poisonType=pt;}else c.e+=amt*food*eff;
         // taste learning: nudge the value of this colour toward what just happened
         if(lr>0)c.val[pt]=clamp(c.val[pt]+lr*(bad?25:5)*((bad?-1:1)-c.val[pt]),-1,1); // a bad meal teaches five times as much as a good one
         c.bites++;
@@ -906,7 +908,7 @@ function step(w){
   if(t===w.rules.flood)flood(w);
   if(t%HYDRO_EVERY===0)hydro(w);
   if(t%ERODE_EVERY===0)erode(w);
-  const grow=0.0031*(0.28+0.72*sv)*(w.climate?w.climate.mul:1);
+  const grow=0.0031*(w.rules.rich||1)*(0.28+0.72*sv)*(w.climate?w.climate.mul:1);
   const P=w.plant,F=w.fert,M=w.moist;
   for(let k=0;k<P.length;k++){const f=F[k];if(f<=0)continue;let p=P[k];p+=grow*(0.45+1.1*M[k])*(p+0.03)*(1-p/f);P[k]=p<0?0:p;}
   const B=w.buckets;for(let i=0;i<B.length;i++)B[i].length=0;
@@ -1009,6 +1011,11 @@ function startPlague(w,x,y,message){
 
 /* Everything a person does to an island is recorded with the tick it happened on, so a link can
    replay it at the same moment. Positions are rounded to whole units, live and replayed alike. */
+/* Islands a link can name: #island-42 is the usual one, and #split-42 a rich island that the sea cuts
+   in two after three years, where one species can become two (see tools/speciation.js). */
+const SCENARIOS={island:{},split:{land:"two",flood:3*YEAR,rich:2}};
+function scenarioOf(rules){const r=JSON.stringify(rules||{});return Object.keys(SCENARIOS).find(k=>JSON.stringify(SCENARIOS[k])===r)||null;}
+
 const TOOL_CODES={feed:"f",rain:"r",hunters:"h",meteor:"m",plague:"p"},TOOLS=Object.keys(TOOL_CODES);
 const CODE_TOOLS=Object.fromEntries(TOOLS.map(t=>[TOOL_CODES[t],t]));
 
@@ -1085,7 +1092,10 @@ const WORLD_SHAPE={
   calls:listOf(2,Object.assign(nums("freq danger food listen samples pendingN"),{meaning:orNull("s"),heardLogged:"b",pending:orNull("s")})),
   mindHistory:[nums("learn surp know a b")],learnStart:"n",learnUpLogged:"b",learnDownLogged:"b",
   sel:{births:"n",popN:"n",par:TRAITS,pop:TRAITS,sq:TRAITS},selection:orNull({"*":{s:"n",mean:"n"}}),selTrend:{"*":nums("dir n last")},
-  struggle:orNull("n"),ornStart:"n",ornLogged:"b",fedLogged:"b",deathsNoKids:"n",deathsAll:"n"};
+  struggle:orNull("n"),ornStart:"n",ornLogged:"b",fedLogged:"b",deathsNoKids:"n",deathsAll:"n",
+  rules:v=>v===undefined||rulesOK(v)}; // files saved before rules were kept have none
+const RULE_SHAPES={genes:{"*":"n"},poison:"b",land:oneOf("two"),flood:"i",rich:v=>Number.isFinite(v)&&v>0&&v<=10};
+function rulesOK(v){return !!v&&typeof v==="object"&&!Array.isArray(v)&&Object.keys(v).every(k=>Object.hasOwn(RULE_SHAPES,k)&&fits(v[k],RULE_SHAPES[k]));}
 const CREATURE_SHAPE={id:"i",x:"n",y:"n",a:"n",gen:"n",age:"n",kids:"n",kills:"n",cool:"n",rest:"n",wait:"n",v:"n",sigA:"n",sigB:"n",mem:"n",
   sick:"n",immune:"b",dead:"b",cause:"s",sp:"i",parentId:"i",mateId:"i",e:"n",h:"n",maxAge:"n",pred:"n",pb:"n",surprise:"n",fear:"n",rBar:"n",mood:"n",
   ePrev:"n",poisoned:"n",poisonType:oneOf(0,1),bites:"n",mates:"n",fed:"b"};
@@ -1158,6 +1168,7 @@ function deserialize(o){
   const w=initWorld(o.seed,fromB64(o.height,N),fromB64(o.fnoise,N));
   for(const k of GRIDS.slice(2))w[k].set(fromB64(o[k],N));
   for(const k of WORLD_KEYS)w[k]=o[k];
+  if(!w.rules)w.rules={};
   route(w);
   updateWater(w);
   for(const s of o.species){s.repW=fromB64(s.repW,NI*NH+NO*NH);w.species.set(s.id,s);}
@@ -1175,7 +1186,7 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     W, G, CELL, NI, NH, NO, IE, MAX_EYES, PER_EYE, SEE_FOOD, SEE_PREY, SEE_HUNTER, SEE_WATER, YEAR, CAP,
     DEEP, SHALLOW, SAND, GRASS, FOREST, ROCK, SEA, SPECIES_GAP, PLAGUE_TICKS, HYDRO_EVERY, ERODE_EVERY, REST, ROOTS,
-    act, encodeActions, decodeActions, toB64, fromB64, geneDistance,
+    act, encodeActions, decodeActions, toB64, fromB64, geneDistance, SCENARIOS, scenarioOf,
     makeWorld, step, census, assignSpecies, distTo, meteor, rain, dropHunters, startPlague, hydro, erode, reshape, isLake,
     makeChild, spawnGroup, nameFor, seasonOf, yearOf, days, cellOf, terrAt, plantAt, pairShare, serialize, deserialize, rnd, warmth,
     clamp, CALL_NAMES, PLANT_NAMES, SEL_TRAITS, plantKinds, analyzeMinds, sampleMinds, freshMind, avgLearn, avgTrait,

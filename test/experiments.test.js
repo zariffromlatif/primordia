@@ -35,10 +35,26 @@ test("an experiment can take the poison away, and its twin starts out identical"
   assert.ok(!safe.events.some(e => e.text.includes("turned poisonous")));
 });
 
-test("the main island has no rules, and snapshots don't carry them", () => {
-  const w = sim.makeWorld(9);
-  assert.deepEqual(w.rules, {});
-  assert.ok(!("rules" in sim.serialize(w)));
+test("snapshots keep an island's rules, and files saved before rules were kept still load", () => {
+  assert.deepEqual(sim.makeWorld(9).rules, {});
+  const w = sim.makeWorld(9, [], sim.SCENARIOS.split), saved = () => JSON.parse(JSON.stringify(sim.serialize(w)));
+  const back = sim.deserialize(saved());
+  assert.deepEqual(back.rules, sim.SCENARIOS.split);
+  assert.equal(sim.scenarioOf(back.rules), "split");
+  const old = saved(); delete old.rules;
+  assert.deepEqual(sim.deserialize(old).rules, {});
+  assert.equal(sim.scenarioOf({}), "island");
+  for (const bad of [{ rich: "lots" }, { rich: 0 }, { nonsense: 1 }, { __proto__: null, genes: 3 }, [1], "x"])
+    assert.throws(() => sim.deserialize({ ...saved(), rules: bad }), /damaged/, JSON.stringify(bad));
+});
+
+test("on a rich island plants grow back twice as fast", () => {
+  const plain = sim.makeWorld(9), rich = sim.makeWorld(9, [], { rich: 2 });
+  plain.creatures = []; rich.creatures = [];
+  const before = Float32Array.from(plain.plant);
+  sim.step(plain); sim.step(rich);
+  let k = 0; while (!(plain.fert[k] > 0.5 && plain.plant[k] - before[k] > 1e-4)) k++;
+  assert.equal(((rich.plant[k] - before[k]) / (plain.plant[k] - before[k])).toFixed(3), "2.000");
 });
 
 test("an experiment's island measures itself every day and replays exactly", () => {
@@ -70,7 +86,8 @@ test("twin islands match tick for tick until the sea floods one of them in two",
   const middle = w => { let deep = 0, n = 0; for (let j = 20; j < sim.G - 20; j++) { n++; if (w.terr[j * sim.G + sim.G / 2] === sim.DEEP) deep++; } return deep / n; };
   assert.equal(middle(joined), 0, "the two islands start out joined by land");
   for (let i = 0; i < 299; i++) { sim.step(joined); sim.step(flooded); }
-  assert.ok(JSON.stringify(sim.serialize(joined)) === JSON.stringify(sim.serialize(flooded)), "identical before the flood");
+  const state = w => { const o = sim.serialize(w); delete o.rules; return JSON.stringify(o); };
+  assert.ok(state(joined) === state(flooded), "identical before the flood, apart from the rule itself");
   sim.step(joined); sim.step(flooded);
   assert.equal(middle(flooded), 1, "deep sea between them after it");
   assert.equal(middle(joined), 0);

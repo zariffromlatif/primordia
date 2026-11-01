@@ -16,7 +16,7 @@ function open() {
 test("a new island announces itself, then sends its terrain and panels once", () => {
   const { ask } = open();
   const [hello] = ask({ type: "new", seed: 31 });
-  assert.deepEqual(hello, { type: "world", seed: 31, tick: 0, loaded: false, actions: [], replayable: true });
+  assert.deepEqual(hello, { type: "world", seed: 31, tick: 0, loaded: false, actions: [], replayable: true, scenario: "island" });
   const [f1] = ask({ type: "frame", run: true, speed: 4 });
   assert.equal(f1.tick, 4);
   assert.equal(f1.cr.length % STRIDE, 0);
@@ -66,7 +66,7 @@ test("an island saved through one host loads into another and carries on identic
   assert.equal(snap.type, "snapshot");
   assert.match(snap.name, /^primordia-island-34-day-\d+\.json$/);
   const [hello] = b.ask({ type: "load", text: snap.text });
-  assert.deepEqual(hello, { type: "world", seed: 34, tick: 600, loaded: true, actions: [], replayable: true });
+  assert.deepEqual(hello, { type: "world", seed: 34, tick: 600, loaded: true, actions: [], replayable: true, scenario: "island" });
   const fa = a.ask({ type: "frame", run: true, speed: 300, budget: 1e9 })[0], fb = b.ask({ type: "frame", run: true, speed: 300, budget: 1e9 })[0];
   assert.deepEqual(Array.from(fb.cr), Array.from(fa.cr));
 });
@@ -146,4 +146,16 @@ test("a new island can start with actions to replay", () => {
   const [f] = ask({ type: "frame", run: true, speed: 5 });
   assert.equal(f.flashes[0].kind, "rain", "the recorded rain fell on its tick");
   assert.equal(f.actions, undefined, "a replay doesn't change the link");
+});
+
+test("a link can name a scenario, and a saved island of it loads as the same scenario", () => {
+  const a = open(), b = open();
+  assert.equal(a.ask({ type: "new", seed: 1003, scenario: "split" })[0].scenario, "split");
+  assert.equal(a.ask({ type: "new", seed: 1003, scenario: "toString" })[0].scenario, "island", "an unknown name gets the usual island");
+  a.ask({ type: "new", seed: 1003, scenario: "split" });
+  a.ask({ type: "frame", run: true, speed: 50, budget: 1e9 });
+  const [hello] = b.ask({ type: "load", text: a.ask({ type: "save" })[0].text });
+  assert.equal(hello.scenario, "split");
+  const fa = a.ask({ type: "frame", run: true, speed: 50, budget: 1e9 })[0], fb = b.ask({ type: "frame", run: true, speed: 50, budget: 1e9 })[0];
+  assert.deepEqual(Array.from(fb.cr), Array.from(fa.cr), "and carries on identically");
 });

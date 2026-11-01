@@ -21,19 +21,20 @@ let lastTreeKey="";  // what the family tree was last drawn for
 
 /* ---------- island links ----------
    #island-12345 replays the same island, and each part like /m5000.512.300 replays something a
-   person did to it: here a meteor on tick 5000 at (512, 300). */
-function readHash(){const m=/^#island-(\d{1,10})((?:\/[fhmpr]\d+\.\d+\.\d+)*)$/.exec(location.hash);return m?{seed:Number(m[1]),actions:decodeActions(m[2])}:null;}
+   person did to it: here a meteor on tick 5000 at (512, 300). #split-12345 is the same seed in the
+   split scenario (see SCENARIOS in src/sim.js). */
+function readHash(){const m=/^#(island|split)-(\d{1,10})((?:\/[fhmpr]\d+\.\d+\.\d+)*)$/.exec(location.hash);return m?{scenario:m[1],seed:Number(m[2]),actions:decodeActions(m[3])}:null;}
 const opened=readHash();
-let seed=opened?opened.seed:(Math.random()*1e9)|0,actions=opened?opened.actions:[],replayable=true;
+let seed=opened?opened.seed:(Math.random()*1e9)|0,actions=opened?opened.actions:[],replayable=true,scenario=opened?opened.scenario:"island";
 let selectedId=0,pickedSp=0,follow=false,tool="inspect",speedIx=0,running=!reduce,frame=0; // pickedSp: the species tapped to pick it, if any
 const cam={x:W/2,y:W/2,z:1};
-function hashFor(){return"#island-"+seed+(replayable?encodeActions(actions):"");}
+function hashFor(){return"#"+scenario+"-"+seed+(replayable?encodeActions(actions):"");}
 // A new island gets its own history entry; recording another action just updates the link.
 function writeHash(newEntry){
   const h=hashFor();if(location.hash===h)return;
   try{if(newEntry)location.hash=h.slice(1);else history.replaceState(null,"",h);}catch(e){/* hash unavailable */}
 }
-window.addEventListener("hashchange",()=>{const h=readHash();if(h&&location.hash!==hashFor())newWorld(h.seed,h.actions);});
+window.addEventListener("hashchange",()=>{const h=readHash();if(h&&location.hash!==hashFor())newWorld(h.seed,h.actions,h.scenario);});
 
 /* ---------- the engine: a worker if possible, otherwise this page ---------- */
 let engine=null,pending=false,worldMsg=null;
@@ -60,7 +61,7 @@ function post(m){if(m.type==="new"||m.type==="load")worldMsg=m;engine.post(m);}
 function receive(m){
   if(m.type==="frame"){pending=false;takeFrame(m);}
   else if(m.type==="world"){
-    seed=m.seed;actions=m.actions;replayable=m.replayable;writeHash(true);
+    seed=m.seed;actions=m.actions;scenario=m.scenario||"island";replayable=m.replayable&&!!m.scenario;writeHash(true);
     F=null;terrain=null;hydro=null;panelData=null;events=[];flashes=[];lastToxic=-1;
     selectedId=0;follow=false;buildInspector();
     cam.x=W/2;cam.y=W/2;cam.z=1;
@@ -645,7 +646,7 @@ function updateSeedLine(){
   const n=actions.length;
   $("#seedline").textContent=!replayable
     ?`This is island ${seed}, loaded from a save made before actions were recorded, so its link only replays how the island began.`
-    :`This is island ${seed}${n?` with ${n} recorded action${n===1?"":"s"}`:""}. Its link replays the island and its whole history${n?", including everything done to it":""}.`;
+    :`This is island ${seed}${n?` with ${n} recorded action${n===1?"":"s"}`:""}.${scenario==="split"?" It's a rich island that the sea cuts in two after three years.":""} Its link replays the island and its whole history${n?", including everything done to it":""}.`;
 }
 
 let noticeTimer=0;
@@ -697,13 +698,13 @@ const playBtn=$("#play");
 function syncPlay(){playBtn.textContent=running?"Pause":(F&&F.tick?"Resume":"Start");}
 playBtn.onclick=()=>{running=!running;syncPlay();};
 $("#speed").onclick=()=>{speedIx=(speedIx+1)%SPEEDS.length;$("#speed").textContent=`Speed ${SPEEDS[speedIx]}×`;};
-function newWorld(s,acts){post({type:"new",seed:s,actions:acts||[]});}
+function newWorld(s,acts,sc){post({type:"new",seed:s,actions:acts||[],scenario:sc||"island"});}
 $("#reset").onclick=()=>newWorld((Math.random()*1e9)|0);
 
 /* ---------- main loop ---------- */
 startEngine();
 writeHash(false);buildInspector();updateSeedLine();syncPlay();
-newWorld(seed,actions);
+newWorld(seed,actions,scenario);
 let failed="";
 function loop(){
   requestAnimationFrame(loop); // asked for first, so a frame that fails to draw can't stop the island for good
