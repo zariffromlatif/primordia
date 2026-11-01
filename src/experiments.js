@@ -44,7 +44,7 @@ const EXPERIMENTS=[
   {id:"learning",question:"Does learning pay?",
     about:"Grazers must learn which plant colour is poisonous, because it can change every season. On one island of each pair, nobody can learn.",
     arms:[{label:"Can learn",rules:{}},{label:"Can't learn",rules:{genes:{learn:0}}}],
-    measures:["grazers","know"],years:5,islands:6},
+    measures:["grazers","know"],years:5,islands:10},
   {id:"poison",question:"What keeps learning alive?",
     about:"Learning costs energy, so evolution keeps it only where it pays. On one island of each pair there is no poison, so there is nothing worth learning about plants.",
     arms:[{label:"Poison",rules:{}},{label:"No poison",rules:{poison:false}}],

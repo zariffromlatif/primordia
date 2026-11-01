@@ -632,7 +632,7 @@ function live(w,c,babies){
         const bad=pt===w.toxic&&w.rules.poison!==false;
         if(bad){c.e-=amt*22*eff*0.9;c.poisoned=40;c.poisonType=pt;}else c.e+=amt*22*eff;
         // taste learning: nudge the value of this colour toward what just happened
-        if(lr>0)c.val[pt]=clamp(c.val[pt]+lr*5*((bad?-1:1)-c.val[pt]),-1,1);
+        if(lr>0)c.val[pt]=clamp(c.val[pt]+lr*(bad?25:5)*((bad?-1:1)-c.val[pt]),-1,1); // a bad meal teaches five times as much as a good one
         c.bites++;
       }
     }

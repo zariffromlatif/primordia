@@ -599,3 +599,14 @@ test("feeling poisoned wears off", () => {
   sim.step(w);
   assert.equal(c.inp[sim.IE + 3], 0);
 });
+
+test("a bad meal teaches a grazer five times as much as a good one", () => {
+  const moved = toxic => {
+    const w = sim.makeWorld(60), { c, place } = grazerOnPlant(w, 0);
+    w.toxic = toxic ? 0 : 1; c.g.learn = 0.01; c.val[0] = 0; c.e = c.maxE * 0.5;
+    place(); sim.step(w);
+    assert.equal(c.bites, 1);
+    return Math.abs(c.val[0]);
+  };
+  assert.equal((moved(true) / moved(false)).toFixed(3), "5.000");
+});
