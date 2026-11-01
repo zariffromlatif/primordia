@@ -26,6 +26,7 @@ const PLAGUE_TICKS=700;     // how long an infection lasts
 const CALL_NAMES=["A","B"],PLANT_NAMES=["gold","blue"];
 const MATURE=90,MATE_RANGE=26,REST=60,SELF_WAIT=200; // breeding age, how close a mate must be, pause after breeding, wait before budding alone
 const FRESH_REACH=6;        // how many cells away an eye can make out fresh water
+const ON=new Int32Array(NI); // scratch: which senses are on this tick
 const ROOTS=0.15;           // grazing can't strip a plant below this share of what its ground can grow, so grazed land recovers
 
 function mulberry32(a){return function(){a|=0;a=(a+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296;};}
@@ -369,7 +370,8 @@ function shell(g,brain){
     pred:0,pb:0,surprise:0,fear:0,rBar:0,mood:0,ePrev:-1,poisoned:0,poisonType:0,bites:0,mates:0,fed:false,
     val:new Float32Array([clamp(0.5+(g.taste||0),-1,1),clamp(0.5-(g.taste||0),-1,1)]), // learned value of gold, blue plants
     pw:new Float32Array(NH),prevHid:new Float32Array(NH), // the danger predictor, tuned by experience and not inherited
-    sp:0,parentId:0,mateId:0,e:0,h:1,maxAge:0,r:3+g.size*3.2,maxE:100*g.size}; // h: how much water its body holds, 0 to 1
+    sp:0,parentId:0,mateId:0,e:0,h:1,maxAge:0,r:3+g.size*3.2,maxE:100*g.size, // h: how much water its body holds, 0 to 1
+    ps:-1,p08:0,p03:0}; // the body size its cached powers belong to
   return c;
 }
 
@@ -590,9 +592,10 @@ function live(w,c,babies){
   inp[IE+6]=c.mem;
   inp[IE+7]=c.surprise;
   inp[IE+8]=1-c.h;
-  // think
-  const hid=c.hid,out=c.out;
-  for(let h=0;h<NH;h++){let s=c.b1[h];const o=h*NI;for(let i=0;i<NI;i++)s+=c.w1[o+i]*inp[i];hid[h]=Math.tanh(s);}
+  // think: a sense that reads zero adds nothing to a neuron, so only the senses that are on are summed
+  const hid=c.hid,out=c.out,w1=c.w1,b1=c.b1;let non=0;
+  for(let i=0;i<NI;i++)if(inp[i]!==0)ON[non++]=i;
+  for(let h=0;h<NH;h++){let s=b1[h];const o=h*NI;for(let j=0;j<non;j++){const i=ON[j];s+=w1[o+i]*inp[i];}hid[h]=Math.tanh(s);}
   for(let k=0;k<NO;k++){
     let s;
     if(k===5){s=c.b2[5]+c.pb;for(let h=0;h<NH;h++)s+=c.pw[h]*hid[h];}
@@ -614,7 +617,8 @@ function live(w,c,babies){
   c.x=nx;c.y=ny;c.v=v;
   const s=g.size;
   // wide, long sight cones cost more to run, and so does every extra eye
-  let cost=0.04*Math.pow(s,0.8)+0.028*v*v*s+0.0007*g.sense*(0.35+0.65*g.fov/3.4)+0.006+0.002*ne+0.022*g.diet+0.03*(c.sigA+c.sigB)+lr*1.5+0.008*g.orn; // a learning brain and a showy ornament both cost energy
+  if(c.ps!==s){c.ps=s;c.p08=Math.pow(s,0.8);c.p03=Math.pow(s,0.3);} // powers of the body size, worked out once
+  let cost=0.04*c.p08+0.028*v*v*s+0.0007*g.sense*(0.35+0.65*g.fov/3.4)+0.006+0.002*ne+0.022*g.diet+0.03*(c.sigA+c.sigB)+lr*1.5+0.008*g.orn; // a learning brain and a showy ornament both cost energy
   if(c.sick)cost+=0.07;
   if(tt===DEEP)cost+=0.12;
   if(c.h<0.25)cost+=0.06*(0.25-c.h)/0.25+(c.h<=0?0.1:0); // dehydration
@@ -622,7 +626,7 @@ function live(w,c,babies){
   // Heat and hurry dry a body out. Rivers, lakes and puddles after rain fill it back up. Juicy
   // plants in damp soil help a little, and the blood of a fresh kill a lot.
   const k2=cellOf(c.x,c.y),mk=w.moist[k2];
-  let hy=c.h-(0.0004+0.0006*w.season)*(1+0.4*v)*Math.pow(s,0.3);
+  let hy=c.h-(0.0004+0.0006*w.season)*(1+0.4*v)*c.p03;
   if(w.water[k2]>0)hy+=0.03;else if(mk>0.8)hy+=(mk-0.8)*0.03;
   const herb=1-g.diet,eff=herb*herb;
   if(eff>0.02){

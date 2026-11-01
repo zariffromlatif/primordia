@@ -37,7 +37,10 @@ function writeHash(newEntry){
 window.addEventListener("hashchange",()=>{const h=readHash();if(h&&location.hash!==hashFor())newWorld(h.seed,h.actions,h.scenario);});
 
 /* ---------- the engine: a worker if possible, otherwise this page ---------- */
-let engine=null,pending=false,worldMsg=null;
+let engine=null,pending=false,worldMsg=null,due=false; // due: this screen refresh is still owed a batch of ticks
+/* Asks for the next batch of ticks. Each screen refresh is owed one, sent as soon as the last batch is
+   back, so the simulation runs while the page draws without ever running ahead of the chosen speed. */
+function ask(){pending=true;due=false;engine.post({type:"frame",run:running,speed:SPEEDS[speedIx],budget:engine.kind==="worker"?40:12});}
 function inPage(){
   const host=makeHost(m=>queueMicrotask(()=>receive(m)));
   engine={kind:"page",post:m=>host.handle(m)};
@@ -59,7 +62,7 @@ function startEngine(){
 function post(m){if(m.type==="new"||m.type==="load")worldMsg=m;engine.post(m);}
 
 function receive(m){
-  if(m.type==="frame"){pending=false;takeFrame(m);}
+  if(m.type==="frame"){pending=false;takeFrame(m);if(due)ask();}
   else if(m.type==="world"){
     seed=m.seed;actions=m.actions;scenario=m.scenario||"island";replayable=m.replayable&&!!m.scenario;writeHash(true);
     F=null;terrain=null;hydro=null;panelData=null;events=[];flashes=[];lastToxic=-1;
@@ -709,8 +712,7 @@ let failed="";
 function loop(){
   requestAnimationFrame(loop); // asked for first, so a frame that fails to draw can't stop the island for good
   try{
-    // ask for the next frame as soon as the last one is in; the simulation steps while this one draws
-    if(!pending){pending=true;engine.post({type:"frame",run:running,speed:SPEEDS[speedIx],budget:engine.kind==="worker"?40:12});}
+    due=true;if(!pending)ask();
     drawWorld();
     if(selectedId)drawBrain();
     if(frame%6===0)drawChart();
