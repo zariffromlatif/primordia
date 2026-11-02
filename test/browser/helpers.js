@@ -1,7 +1,7 @@
 "use strict";
 /* Shared setup for the browser tests: a small static server for the project folder, and pages that
-   collect their own errors. Requests to other hosts (the web font) get an empty answer, so the tests
-   don't depend on the network. */
+   collect their own errors. Requests to other hosts (the web font's stylesheet) get an empty stylesheet, so the
+   tests don't depend on the network. */
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -43,7 +43,7 @@ function setup(test) {
     page.errors = [];
     page.on("pageerror", e => page.errors.push(e.message));
     page.on("console", m => { if (m.type() === "error") page.errors.push(m.text()); });
-    await page.route("**/*", r => /^https?:/.test(r.request().url()) && !r.request().url().startsWith(env.server.url) ? r.fulfill({ status: 200, body: "" }) : r.continue());
+    await page.route("**/*", r => /^https?:/.test(r.request().url()) && !r.request().url().startsWith(env.server.url) ? r.fulfill({ status: 200, contentType: "text/css", body: "" }) : r.continue());
     // the simulation's tick, as the page last heard it: from the worker's frames, or from the page's own steps
     await page.addInitScript(() => {
       const W = window.Worker;

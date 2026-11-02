@@ -718,7 +718,7 @@ function loop(){
     if(frame%6===0)drawChart();
     if(frame%10===0){updateStats();updateInspector();}
   }catch(e){
-    if(String(e)!==failed){failed=String(e);console.error(e);notice("Something went wrong drawing the island. New island starts afresh.");}
+    if(String(e)!==failed){failed=String(e);console.error("Drawing the island failed: "+(e&&e.message||e),e);notice("Something went wrong drawing the island. New island starts afresh.");}
   }
   frame++;
 }
