@@ -50,6 +50,6 @@ test("opened straight from disk, the experiments page still sets itself up", { t
 test("the experiments page links to the islands where a species splits", { timeout: 30000 }, async () => {
   const page = await env.open("experiments.html");
   const links = await page.$$eval("#watch .watch a", as => as.map(a => a.getAttribute("href")));
-  assert.deepEqual(links, ["index.html#split-1003", "index.html#split-1004", "index.html#split-1014"]);
+  assert.deepEqual(links, ["index.html#split-1008", "index.html#split-1013", "index.html#split-1019"]);
   await page.close();
 });

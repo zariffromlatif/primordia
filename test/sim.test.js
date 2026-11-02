@@ -600,10 +600,28 @@ test("feeling poisoned wears off", () => {
   assert.equal(c.inp[sim.IE + 3], 0);
 });
 
+test("a learned dislike fades, so a grazer tries the plant again once the poison has moved on", () => {
+  const w = sim.makeWorld(21);
+  const { c, place } = grazerOnPlant(w, 1);
+  c.g.learn = 0.04; c.g.taste = 0; c.val[1] = -1; // it learned blue was poisonous; born liking both colours
+  const step = () => { w.toxic = 0; sim.step(w); }; // the gold plants are the poisonous ones now, and stay so
+  place(); step();
+  assert.equal(c.bites, 0, "at first it won't touch blue");
+  const away = () => { c.x = 4; c.y = 4; c.e = c.maxE * 0.6; c.h = 1; };
+  let ticks = 0;
+  while (c.val[1] <= -0.2 && ticks < 3000) { away(); step(); ticks++; }
+  assert.ok(ticks > 500 && ticks < 1000, `the dislike faded over ${ticks} ticks, about a season`);
+  place(); step();
+  assert.equal(c.bites, 1, "so it tastes blue again");
+  const after = c.val[1];
+  for (let i = 0; i < 10; i++) { place(); step(); }
+  assert.ok(c.val[1] > after, "and learns it is safe now");
+});
+
 test("a bad meal teaches a grazer five times as much as a good one", () => {
   const moved = toxic => {
     const w = sim.makeWorld(60), { c, place } = grazerOnPlant(w, 0);
-    w.toxic = toxic ? 0 : 1; c.g.learn = 0.01; c.val[0] = 0; c.e = c.maxE * 0.5;
+    w.toxic = toxic ? 0 : 1; c.g.learn = 0.01; c.g.taste = -0.5; c.val[0] = 0; c.e = c.maxE * 0.5; // born indifferent to gold, so fading moves nothing
     place(); sim.step(w);
     assert.equal(c.bites, 1);
     return Math.abs(c.val[0]);

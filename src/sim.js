@@ -28,6 +28,7 @@ const MATURE=90,MATE_RANGE=26,REST=60,SELF_WAIT=200; // breeding age, how close 
 const FRESH_REACH=6;        // how many cells away an eye can make out fresh water
 const ON=new Int32Array(NI); // scratch: which senses are on this tick
 const ROOTS=0.15;           // grazing can't strip a plant below this share of what its ground can grow, so grazed land recovers
+const FORGET=0.001;         // each tick, a learned taste drifts this share of the way back to the inborn one: it fades over about a season
 
 function mulberry32(a){return function(){a|=0;a=(a+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296;};}
 function rnd(w){const a=w.rs=(w.rs+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296;}
@@ -628,6 +629,11 @@ function live(w,c,babies){
   const k2=cellOf(c.x,c.y),mk=w.moist[k2];
   let hy=c.h-(0.0004+0.0006*w.season)*(1+0.4*v)*c.p03;
   if(w.water[k2]>0)hy+=0.03;else if(mk>0.8)hy+=(mk-0.8)*0.03;
+  // A learned taste fades back toward the inborn one unless meals renew it. Without this, a grazer
+  // that had learned to shun a plant would never taste it again, and when the poison moved on to
+  // the other plant it would come to shun both and starve among plenty.
+  const tg=g.taste||0;
+  c.val[0]+=FORGET*(clamp(0.5+tg,-1,1)-c.val[0]);c.val[1]+=FORGET*(clamp(0.5-tg,-1,1)-c.val[1]);
   const herb=1-g.diet,eff=herb*herb;
   if(eff>0.02){
     const pt=w.ptype[k2];
@@ -1189,7 +1195,7 @@ function deserialize(o){
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     W, G, CELL, NI, NH, NO, IE, MAX_EYES, PER_EYE, SEE_FOOD, SEE_PREY, SEE_HUNTER, SEE_WATER, YEAR, CAP,
-    DEEP, SHALLOW, SAND, GRASS, FOREST, ROCK, SEA, SPECIES_GAP, PLAGUE_TICKS, HYDRO_EVERY, ERODE_EVERY, REST, ROOTS,
+    DEEP, SHALLOW, SAND, GRASS, FOREST, ROCK, SEA, SPECIES_GAP, PLAGUE_TICKS, HYDRO_EVERY, ERODE_EVERY, REST, ROOTS, FORGET,
     act, encodeActions, decodeActions, toB64, fromB64, geneDistance, SCENARIOS, scenarioOf,
     makeWorld, step, census, assignSpecies, distTo, meteor, rain, dropHunters, startPlague, hydro, erode, reshape, isLake,
     makeChild, spawnGroup, nameFor, seasonOf, yearOf, days, cellOf, terrAt, plantAt, pairShare, serialize, deserialize, rnd, warmth,

@@ -48,10 +48,10 @@ const EXPERIMENTS=[
   {id:"poison",question:"What keeps learning alive?",
     about:"Learning costs energy, so evolution keeps it only where it pays. On one island of each pair there is no poison, so there is nothing worth learning about plants.",
     arms:[{label:"Poison",rules:{}},{label:"No poison",rules:{poison:false}}],
-    measures:["learn"],years:8,islands:10},
+    measures:["learn"],years:8,islands:20},
   {id:"isolation",question:"What happens when the sea cuts an island in two?",
     about:"Twins live their first year as one island made of two long halves joined by land. Then the sea floods the middle of one twin and cuts it in two. Do the halves go their own ways?",
-    note:"What this shows, and what it doesn't: the halves of a cut island end up home to different species, but mostly because one half crashes and is recolonised by newcomers, not because one species splits in two. On the usual island, lineages rarely last long enough on half of it for that; on a rich one they sometimes do (see below).",
+    note:"What this shows, and what it doesn't: the halves of a cut island end up home to different species, but often because one half crashes and is recolonised by newcomers, not because one species splits in two. After one year, one lineage rarely holds the whole island yet. When the sea comes later, one species does sometimes become two (see below).",
     arms:[{label:"Joined",rules:{land:"two"}},{label:"Cut in two",rules:{land:"two",flood:YEAR}}],
     measures:["apart","shared"],years:5,islands:10}
 ];
