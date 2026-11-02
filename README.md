@@ -9,6 +9,7 @@ Open `index.html` in a browser. There's no build step.
 ```bash
 npm start        # serves the folder at http://localhost:3000
 npm test         # runs the simulation tests (Node 20+)
+npm run test:browser  # runs the pages in headless Chromium (after npm install; npx playwright install chromium the first time)
 npm run ecology  # runs 8 islands for 10 years and reports how well the ecology sustains itself
 npm run experiment  # runs the experiments headless and prints their verdicts
 npm run speciation  # runs the split scenario on 20 islands and reports which become two species
@@ -16,7 +17,7 @@ npm run speciation  # runs the split scenario on 20 islands and reports which be
 
 When the page is served, the simulation runs in a Web Worker, so even a crowded island at 40× speed never stalls drawing. Browsers don't allow workers on pages opened straight from disk, so then the page runs the simulation itself. It works the same, just with a smaller time budget per frame.
 
-Every push to `main` runs the tests and deploys to GitHub Pages. Add `#island-12345` to the URL to reopen a specific island, or `#split-12345` for the same seed as a rich island that the sea cuts in two after three years (see Experiments). Every random number comes from the island's own seeded generator, and every use of a tool is recorded in the link as it happens. For example, `#island-12345/m5000.512.300` adds a meteor on tick 5000 at (512, 300). So a link replays an island's whole history, including everything anyone did to it, at the same moments. Using a tool during a replay takes history somewhere new: the link keeps what has happened so far plus the new action, and drops the rest of the replay. History is only guaranteed to match in the same browser and the same version of Primordia, since browsers can round some maths functions differently.
+Every push to `main` runs the tests, including the pages in headless Chromium, and deploys to GitHub Pages. Add `#island-12345` to the URL to reopen a specific island, or `#split-12345` for the same seed as a rich island that the sea cuts in two after three years (see Experiments). Every random number comes from the island's own seeded generator, and every use of a tool is recorded in the link as it happens. For example, `#island-12345/m5000.512.300` adds a meteor on tick 5000 at (512, 300). So a link replays an island's whole history, including everything anyone did to it, at the same moments. Using a tool during a replay takes history somewhere new: the link keeps what has happened so far plus the new action, and drops the rest of the replay. History is only guaranteed to match in the same browser and the same version of Primordia, since browsers can round some maths functions differently.
 
 ## What you can do
 
@@ -153,6 +154,7 @@ src/experiments-ui.js  the experiments page: runs, charts, tables
 test/sim.test.js    simulation tests
 test/host.test.js   message protocol tests
 test/experiments.test.js  experiment rules, runs and verdicts
+test/browser        the pages in headless Chromium: links, tools, save and load, scenarios, experiments
 tools/ecology.js    ecology report: do hunters hold on, and how often do grazers nearly die out?
 tools/experiment.js runs the experiments headless
 tools/speciation.js can one species become two? runs the split scenario headless

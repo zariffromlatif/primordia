@@ -7,11 +7,15 @@
   "scripts": {
     "start": "npx --yes serve@14.2.4 .",
     "test": "node --test test/*.test.js",
+    "test:browser": "node --test test/browser/*.test.js",
     "ecology": "node tools/ecology.js",
     "experiment": "node tools/experiment.js",
     "speciation": "node tools/speciation.js"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
   }
 }
