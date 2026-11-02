@@ -19,9 +19,9 @@ test("a link to an experiment starts it in workers, and it can be stopped", { ti
   await page.close();
 });
 
-test("from disk, a short experiment runs to a verdict, a chart and a table of every pair", { timeout: 180000 }, async () => {
-  const page = await env.open(env.fileUrl("experiments.html"));
-  await until(() => page.textContent("#engine").then(t => t.includes("opened straight from disk")), 10000, "the engine note");
+test("without workers, a short experiment runs in the page to a verdict, a chart and a table of every pair", { timeout: 180000 }, async () => {
+  const page = await env.open("experiments.html", {}, { workers: false });
+  await until(() => page.textContent("#engine").then(t => t.includes("one island at a time")), 10000, "the engine note");
   await page.evaluate(() => { const x = EXPERIMENTS.find(e => e.id === "learning"); x.years = 1; x.islands = 3; }); // a quick version
   await page.click("#learning .run");
   await until(() => page.textContent("#learning .verdict").then(t => !t.startsWith("Running")), 150000, "the verdict");
@@ -35,6 +35,14 @@ test("from disk, a short experiment runs to a verdict, a chart and a table of ev
   assert.equal(await page.$$eval("#learning .xp-chart .tip .tip-row", r => r.length), 2, "hovering reads out both averages");
   await page.click("#learning .numbers");
   assert.equal(await page.$$eval("#learning .xp-chart:first-of-type tbody tr", r => r.length), 3, "one row per pair");
+  assert.deepEqual(page.errors, []);
+  await page.close();
+});
+
+test("opened straight from disk, the experiments page still sets itself up", { timeout: 30000 }, async () => {
+  const page = await env.open(env.fileUrl("experiments.html"));
+  await until(() => page.textContent("#engine").then(t => /at a time/.test(t)), 10000, "the engine note");
+  assert.equal(await page.$$eval("#experiments .xp", s => s.length), 3);
   assert.deepEqual(page.errors, []);
   await page.close();
 });

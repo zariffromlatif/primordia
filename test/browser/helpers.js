@@ -6,7 +6,11 @@ const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
-const { chromium } = require("playwright");
+const playwright = require("playwright");
+
+// The engine to test in: chromium (the default), firefox or webkit, which is what Safari runs on.
+const ENGINE = process.env.BROWSER || "chromium";
+if (!["chromium", "firefox", "webkit"].includes(ENGINE)) throw new Error(`BROWSER must be chromium, firefox or webkit, not ${ENGINE}`);
 
 const ROOT = path.join(__dirname, "..", "..");
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json" };
@@ -28,12 +32,13 @@ function serve() {
 }
 
 /* Starts the server and a browser once per test file. open() takes a path under the project (served)
-   or a file:// URL, and returns a page whose .errors lists anything that went wrong on it. */
+   or a file:// URL, and returns a page whose .errors lists anything that went wrong on it. With
+   { workers: false } the page has no Web Workers, so it runs the simulation itself. */
 function setup(test) {
   const env = {};
-  test.before(async () => { env.server = await serve(); env.browser = await chromium.launch(); });
+  test.before(async () => { env.server = await serve(); env.browser = await playwright[ENGINE].launch(); });
   test.after(async () => { await env.browser.close(); env.server.close(); });
-  env.open = async (where, options = {}) => {
+  env.open = async (where, options = {}, { workers = true } = {}) => {
     const page = await env.browser.newPage({ viewport: { width: 1280, height: 900 }, acceptDownloads: true, ...options });
     page.errors = [];
     page.on("pageerror", e => page.errors.push(e.message));
@@ -44,6 +49,7 @@ function setup(test) {
       const W = window.Worker;
       if (W) window.Worker = class extends W { constructor(...a) { super(...a); this.addEventListener("message", e => { if (e.data && e.data.type === "frame") window.__tick = e.data.tick; }); } };
     });
+    if (!workers) await page.addInitScript(() => { window.Worker = undefined; });
     await page.goto(where.startsWith("file:") ? where : env.server.url + where);
     await page.evaluate(() => { if (typeof step === "function") { const real = step; window.step = w => { real(w); window.__tick = w.tick; }; } });
     return page;
@@ -67,4 +73,4 @@ async function until(fn, ms = 30000, what = "the condition") {
 /* The island's tick, as the page last heard it from the simulation. */
 const tick = page => page.evaluate(() => window.__tick || 0);
 
-module.exports = { setup, until, tick, ROOT };
+module.exports = { setup, until, tick, ROOT, ENGINE };

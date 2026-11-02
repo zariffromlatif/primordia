@@ -102,11 +102,16 @@ test("a split link opens the scenario, and keeps it while tools are used", { tim
   await page.close();
 });
 
-test("opened straight from disk, the island runs in the page", { timeout: 60000 }, async () => {
-  const page = await env.open(env.fileUrl("index.html") + "#island-5"), workers = [];
-  page.on("worker", w => workers.push(w.url()));
+test("opened straight from disk, the island still runs", { timeout: 60000 }, async () => {
+  const page = await env.open(env.fileUrl("index.html") + "#island-5");
   await until(() => tick(page).then(t => t > 20), 15000, "the island to run");
-  assert.deepEqual(workers, []);
+  assert.deepEqual(page.errors, []);
+  await page.close();
+});
+
+test("without workers, the page runs the island itself", { timeout: 60000 }, async () => {
+  const page = await env.open("#island-5", {}, { workers: false });
+  await until(() => tick(page).then(t => t > 20), 15000, "the island to run");
   assert.deepEqual(page.errors, []);
   await page.close();
 });
