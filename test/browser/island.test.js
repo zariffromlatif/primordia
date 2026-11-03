@@ -139,8 +139,15 @@ test("on a phone, nothing scrolls sideways, in either theme", { timeout: 60000 }
 
 test(`${ENGINE} computes the same islands as Node, bit for bit`, { timeout: 120000 }, async () => {
   const page = await env.open("experiments.html");
+  // in a Web Worker, as the island page runs the simulation, so the long run doesn't hold up the page
+  const inWorker = (source, island) => {
+    const code = `importScripts(${JSON.stringify(new URL("src/sim.js", location.href).href)});
+      onmessage = e => postMessage((${source})({ makeWorld, step, serialize }, e.data));`;
+    const w = new Worker(URL.createObjectURL(new Blob([code], { type: "text/javascript" })));
+    return new Promise((ok, fail) => { w.onmessage = e => { w.terminate(); ok(e.data); }; w.onerror = e => fail(new Error(e.message)); w.postMessage(island); });
+  };
   for (let i = 0; i < ISLANDS.length; i++)
-    assert.equal(await page.evaluate(`(${fingerprint})({ makeWorld, step, serialize }, ${JSON.stringify(ISLANDS[i])})`), PINNED[i]);
+    assert.equal(await page.evaluate(`(${inWorker})(${JSON.stringify(fingerprint.toString())}, ${JSON.stringify(ISLANDS[i])})`), PINNED[i]);
   await page.close();
 });
 

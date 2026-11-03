@@ -17,7 +17,7 @@ test("a new island announces itself, then sends its terrain and panels once", ()
   const { ask } = open();
   const [hello] = ask({ type: "new", seed: 31 });
   assert.deepEqual(hello, { type: "world", seed: 31, tick: 0, loaded: false, actions: [], replayable: true, scenario: "island" });
-  const [f1] = ask({ type: "frame", run: true, speed: 4 });
+  const [f1] = ask({ type: "frame", run: true, speed: 4, budget: 1e9 }); // no time limit, so a slow machine still runs all 4
   assert.equal(f1.tick, 4);
   assert.equal(f1.cr.length % STRIDE, 0);
   assert.equal(f1.cr.length / STRIDE, f1.stats.herb + f1.stats.carn);
@@ -143,7 +143,7 @@ test("a new island can start with actions to replay", () => {
   const { ask } = open();
   const actions = [{ t: 3, tool: "rain", x: 100, y: 100 }];
   assert.deepEqual(ask({ type: "new", seed: 40, actions })[0].actions, actions);
-  const [f] = ask({ type: "frame", run: true, speed: 5 });
+  const [f] = ask({ type: "frame", run: true, speed: 5, budget: 1e9 });
   assert.equal(f.flashes[0].kind, "rain", "the recorded rain fell on its tick");
   assert.equal(f.actions, undefined, "a replay doesn't change the link");
 });
