@@ -628,3 +628,30 @@ test("a bad meal teaches a grazer five times as much as a good one", () => {
   };
   assert.equal((moved(true) / moved(false)).toFixed(3), "5.000");
 });
+
+test("the island's own maths agrees with the engine's to within a few units in the last place", () => {
+  const dv = new DataView(new ArrayBuffer(8));
+  const ulp = x => { dv.setFloat64(0, Math.abs(x)); return 2 ** Math.max(((dv.getUint32(0) >>> 20) - 1023) - 52, -1074); };
+  let s = 1;
+  const r = () => (s = (s * 1103515245 + 12345) % 2147483648) / 2147483648;
+  const cases = [["sin", sim.dsin, Math.sin, () => (r() - 0.5) * 2000], ["cos", sim.dcos, Math.cos, () => (r() - 0.5) * 2000],
+    ["exp", sim.dexp, Math.exp, () => (r() - 0.5) * 100], ["log", sim.dlog, Math.log, () => r() * 1000 + 1e-9],
+    ["tanh", sim.dtanh, Math.tanh, () => (r() - 0.5) * 10], ["pow", x => sim.dpow(x, 0.8), x => Math.pow(x, 0.8), () => r() * 4 + 0.01]];
+  for (const [name, ours, engine, input] of cases) {
+    let worst = 0;
+    for (let i = 0; i < 20000; i++) { const x = input(), b = engine(x); worst = Math.max(worst, Math.abs(ours(x) - b) / ulp(b || 1)); }
+    assert.ok(worst <= 5, `${name} is off by up to ${worst} units in the last place`);
+  }
+  assert.equal(sim.dexp(0), 1);
+  assert.equal(sim.dlog(1), 0);
+  assert.equal(sim.dtanh(30), 1);
+  assert.equal(sim.dtanh(-30), -1);
+  assert.ok(Number.isNaN(sim.dlog(-1)));
+  assert.equal(sim.dlog(0), -Infinity);
+});
+
+test("an island's history is pinned bit for bit, so it is the same in every browser and in Node", () => {
+  const { ISLANDS, fingerprint, PINNED } = require("./fingerprint.js");
+  ISLANDS.forEach((island, i) => assert.equal(fingerprint(sim, island), PINNED[i], "if you changed the simulation on purpose, run node test/fingerprint.js and update PINNED"));
+});
+

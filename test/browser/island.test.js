@@ -2,7 +2,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const { setup, until, tick } = require("./helpers.js");
+const { setup, until, tick, ENGINE } = require("./helpers.js");
+const { ISLANDS, fingerprint, PINNED } = require("../fingerprint.js");
 
 const env = setup(test);
 const fast = async page => { for (let i = 0; i < 3; i++) await page.click("#speed"); }; // 40×
@@ -125,3 +126,11 @@ test("on a phone, nothing scrolls sideways, in either theme", { timeout: 60000 }
     await page.close();
   }
 });
+
+test(`${ENGINE} computes the same islands as Node, bit for bit`, { timeout: 120000 }, async () => {
+  const page = await env.open("experiments.html");
+  for (let i = 0; i < ISLANDS.length; i++)
+    assert.equal(await page.evaluate(`(${fingerprint})({ makeWorld, step, serialize }, ${JSON.stringify(ISLANDS[i])})`), PINNED[i]);
+  await page.close();
+});
+

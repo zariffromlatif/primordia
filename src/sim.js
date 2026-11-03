@@ -30,9 +30,79 @@ const ON=new Int32Array(NI); // scratch: which senses are on this tick
 const ROOTS=0.15;           // grazing can't strip a plant below this share of what its ground can grow, so grazed land recovers
 const FORGET=0.001;         // each tick, a learned taste drifts this share of the way back to the inborn one: it fades over about a season
 
+/* ---------------- maths that every engine computes the same ----------------
+   JavaScript lets each engine compute sin, cos, exp, log, pow, tanh, atan2 and hypot its own way,
+   and they differ in the last digit for a few percent of inputs, so the same island would take a
+   different course in different browsers. The versions here, of sin, cos, exp, log, pow and tanh,
+   use only +, -, *, /, Math.sqrt and Math.floor, which the standard requires to be exact, and exact
+   reads of a number's bits, so every engine gives bit-for-bit the same answers. They follow fdlibm,
+   the reference library most engines' own versions come from, and are accurate to within a few
+   units in the last place: sine and cosine for angles up to about a million radians, and beyond
+   that still the same everywhere, just less accurate. Nothing else is needed: distances use
+   Math.sqrt, and the eyes work out which of them sees something with cross products, not angles. */
+const {dsin,dcos,dexp,dlog,dpow,dtanh}=(()=>{
+  const PIO4=7.85398163397448278999e-01;
+  const INV_PIO2=6.36619772367581382433e-01,PIO2_1=1.57079632673412561417e+00,PIO2_1T=6.07710050650619224932e-11; // π/2 split in two, the first part with 33 bits so k*PIO2_1 is exact
+  const S1=-1.66666666666666324348e-01,S2=8.33333333332248946124e-03,S3=-1.98412698298579493134e-04,S4=2.75573137070700676789e-06,S5=-2.50507602534068634195e-08,S6=1.58969099521155010221e-10;
+  const C1=4.16666666666666019037e-02,C2=-1.38888888888741095749e-03,C3=2.48015872894767294178e-05,C4=-2.75573143513906633035e-07,C5=2.08757232129817482790e-09,C6=-1.13596475577881948265e-11;
+  function sinK(r){const z=r*r;return r+r*z*(S1+z*(S2+z*(S3+z*(S4+z*(S5+z*S6)))));}
+  function cosK(r){const z=r*r;return 1-0.5*z+z*z*(C1+z*(C2+z*(C3+z*(C4+z*(C5+z*C6)))));}
+  function dsin(x){
+    if(x<=PIO4&&x>=-PIO4)return x===0?x:sinK(x);
+    const k=Math.floor(x*INV_PIO2+0.5),r=(x-k*PIO2_1)-k*PIO2_1T;let q=k%4;if(q<0)q+=4;
+    return q===0?sinK(r):q===1?cosK(r):q===2?-sinK(r):-cosK(r);
+  }
+  function dcos(x){
+    if(x<=PIO4&&x>=-PIO4)return cosK(x);
+    const k=Math.floor(x*INV_PIO2+0.5),r=(x-k*PIO2_1)-k*PIO2_1T;let q=k%4;if(q<0)q+=4;
+    return q===0?cosK(r):q===1?-sinK(r):q===2?-cosK(r):sinK(r);
+  }
+  // powers of two from 2^-1074 to 2^1023, made by halving and doubling, which is exact
+  const P2OFF=1074,P2=new Float64Array(1074+1024);
+  {let p=1;for(let n=0;n<=1023;n++){P2[P2OFF+n]=p;p*=2;}p=1;for(let n=0;n<=1074;n++){P2[P2OFF-n]=p;p*=0.5;}}
+  function pow2(k){return k>=-1074&&k<=1023?P2[P2OFF+k]:k>0?Infinity:0;}
+  const LN2_HI=6.93147180369123816490e-01,LN2_LO=1.90821492927058770002e-10,INV_LN2=1.44269504088896338700e+00;
+  const P1=1.66666666666666019037e-01,P2c=-2.77777777770155933842e-03,P3=6.61375632143793436117e-05,P4=-1.65339022054652515390e-06,P5=4.13813679705723846039e-08;
+  function dexp(x){
+    if(!(x<709.782712893384))return x!==x?x:Infinity;
+    if(x<-745.1332191019412)return 0;
+    const k=Math.floor(x*INV_LN2+0.5),hi=x-k*LN2_HI,lo=k*LN2_LO,r=hi-lo,t=r*r;
+    const c=r-t*(P1+t*(P2c+t*(P3+t*(P4+t*P5)))),y=1-((lo-(r*c)/(2-c))-hi);
+    return k>=-1021&&k<=1023?y*P2[P2OFF+k]:y*pow2(k>>1)*pow2(k-(k>>1));
+  }
+  const Lg1=6.666666666666735130e-01,Lg2=3.999999999940941908e-01,Lg3=2.857142874366239149e-01,Lg4=2.222219843214978396e-01,Lg5=1.818357216161805012e-01,Lg6=1.531383769920937332e-01,Lg7=1.479819860511658591e-01;
+  const BITS=new DataView(new ArrayBuffer(8)),SQ2=1.41421356237309514547e+00;
+  function dlog(x){
+    if(!(x>0))return x===0?-Infinity:NaN;
+    if(x===Infinity)return x;
+    let k=0;
+    if(x<2.2250738585072014e-308){x*=18014398509481984;k=-54;} // a subnormal number: scale it up by 2^54 first
+    BITS.setFloat64(0,x);const hx=BITS.getUint32(0);
+    k+=(hx>>>20)-1023;
+    BITS.setUint32(0,(hx&0x000fffff)|0x3ff00000);let m=BITS.getFloat64(0); // the same digits with the exponent set to 0: 1 <= m < 2
+    if(m>SQ2){m*=0.5;k++;}
+    const f=m-1,s=f/(2+f),z=s*s,w=z*z;
+    const R=z*(Lg1+w*(Lg3+w*(Lg5+w*Lg7)))+w*(Lg2+w*(Lg4+w*Lg6)),hfsq=0.5*f*f;
+    return k*LN2_HI-((hfsq-(s*(hfsq+R)+k*LN2_LO))-f);
+  }
+  /* x to the power y, for x > 0 */
+  function dpow(x,y){return x>0?dexp(y*dlog(x)):x===0?(y>0?0:Infinity):NaN;}
+  function dtanh(x){
+    if(x===0)return x;
+    const a=x<0?-x:x;
+    if(a>22)return x<0?-1:1;
+    const r=a+a;let m; // m = e^2a - 1
+    if(r<=0.34657359027997264){const t=r*r,c=r-t*(P1+t*(P2c+t*(P3+t*(P4+t*P5))));m=r+r*c/(2-c);} // small: straight from the kernel, with nothing lost to cancelling
+    else m=dexp(r)-1;
+    const y=m/(m+2);
+    return x<0?-y:y;
+  }
+  return {dsin,dcos,dexp,dlog,dpow,dtanh};
+})();
+
 function mulberry32(a){return function(){a|=0;a=(a+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296;};}
 function rnd(w){const a=w.rs=(w.rs+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296;}
-function gauss(w){let u=0;while(u===0)u=rnd(w);return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*rnd(w));}
+function gauss(w){let u=0;while(u===0)u=rnd(w);return Math.sqrt(-2*dlog(u))*dcos(2*Math.PI*rnd(w));}
 function clamp(v,a,b){return v<a?a:v>b?b:v;}
 
 const SYL=["ka","lo","mi","ra","ve","zu","to","shi","na","pe","or","il","an","ex","qua","dri","sa","yo","fen","bel","tor","vi"];
@@ -65,8 +135,8 @@ function dietWord(d){return d>0.5?"hunter":"grazer";}
 function seasonOf(t){return Math.floor(((t+YEAR/8)%YEAR)/(YEAR/4));}
 function yearOf(t){return Math.floor((t+YEAR/8)/YEAR)+1;}
 function days(t){return Math.max(1,Math.round(t/100));}
-function warmth(t){return 0.5+0.5*Math.sin(t/YEAR*Math.PI*2);}       // 1 in midsummer, 0 in midwinter
-function wetness(t){return 1-0.4*Math.sin(t/YEAR*Math.PI*2);}         // dry summers, wet winters
+function warmth(t){return 0.5+0.5*dsin(t/YEAR*Math.PI*2);}       // 1 in midsummer, 0 in midwinter
+function wetness(t){return 1-0.4*dsin(t/YEAR*Math.PI*2);}         // dry summers, wet winters
 
 function cellOf(x,y){const i=clamp((x/CELL)|0,0,G-1),j=clamp((y/CELL)|0,0,G-1);return j*G+i;}
 function plantAt(w,x,y){if(x<0||y<0||x>=W||y>=W)return 0;return w.plant[cellOf(x,y)];}
@@ -138,7 +208,8 @@ function makeWorld(seed,actions,rules){
   const height=new Float32Array(G*G),fnoise=new Float32Array(G*G),start=new Float32Array(G*G);
   for(let j=0;j<G;j++)for(let i=0;i<G;i++){
     const k=j*G+i,nx=(i+0.5)/G,ny=(j+0.5)/G,dx=nx-0.5,dy=ny-0.5;
-    const d=land?Math.min(Math.hypot((nx-0.29)/0.19,dy/0.5),Math.hypot((nx-0.71)/0.19,dy/0.5)):Math.sqrt(dx*dx+dy*dy)*2;
+    const ax=(nx-0.29)/0.19,bx=(nx-0.71)/0.19,ey=dy/0.5; // two halves: the distance to the nearer one's centre
+    const d=land?Math.sqrt(Math.min(ax*ax,bx*bx)+ey*ey):Math.sqrt(dx*dx+dy*dy)*2;
     let h=fbm(nx*3.4,ny*3.4)*1.15-d*d*0.46+0.1;
     if(land&&Math.abs(dx)<0.045&&Math.abs(dy)<0.38)h=Math.max(h,0.46); // the land that joins them, which a flood can take
     height[k]=h;
@@ -229,11 +300,11 @@ function route(w){
 /* How much water each cell shows: 255 for lakes, 1-254 for streams and rivers by discharge.
    A channel needs a steady supply, so storm runoff alone swells rivers but doesn't cut new ones. */
 function updateWater(w){
-  const Fl=w.flow,St=w.steady,Wt=w.water,T=w.terr,lr=Math.log(RIVER_SPAN);
+  const Fl=w.flow,St=w.steady,Wt=w.water,T=w.terr,lr=dlog(RIVER_SPAN);
   for(let k=0;k<G*G;k++){
     if(T[k]<=SHALLOW){Wt[k]=0;continue;}
     if(isLake(w,k)){Wt[k]=255;continue;}
-    const f=Fl[k];Wt[k]=f>RIVER&&St[k]>RIVER*0.6?1+Math.min(253,(Math.log(f/RIVER)/lr*253)|0):0;
+    const f=Fl[k];Wt[k]=f>RIVER&&St[k]>RIVER*0.6?1+Math.min(253,(dlog(f/RIVER)/lr*253)|0):0;
   }
   // How close the nearest fresh water is, for eyes to make out: 1 on the water, fading to nothing
   // FRESH_REACH cells away. A two-pass chamfer distance, forwards then backwards.
@@ -263,12 +334,12 @@ function hydro(w,warm){
     w.wind+=gauss(w)*0.15;
     if(w.storms.length<4&&rnd(w)<0.05*wet){
       const sp=0.15+rnd(w)*0.25;
-      w.storms.push({x:W*0.1+rnd(w)*W*0.8,y:W*0.1+rnd(w)*W*0.8,r:70+rnd(w)*90,vx:Math.cos(w.wind)*sp,vy:Math.sin(w.wind)*sp,age:0,life:(500+rnd(w)*900)|0,p:0.08+rnd(w)*0.12});
+      w.storms.push({x:W*0.1+rnd(w)*W*0.8,y:W*0.1+rnd(w)*W*0.8,r:70+rnd(w)*90,vx:dcos(w.wind)*sp,vy:dsin(w.wind)*sp,age:0,life:(500+rnd(w)*900)|0,p:0.08+rnd(w)*0.12});
     }
   }
   for(let k=0;k<N;k++)R[k]=0.012*wet*(0.4+H[k]*1.2); // drizzle, heavier on high ground
   for(const s of w.storms){
-    const p=s.p*Math.sin(Math.PI*s.age/s.life)*cr,r2=s.r*s.r;
+    const p=s.p*dsin(Math.PI*s.age/s.life)*cr,r2=s.r*s.r;
     const i0=clamp(((s.x-s.r)/CELL)|0,0,G-1),i1=clamp(((s.x+s.r)/CELL)|0,0,G-1),j0=clamp(((s.y-s.r)/CELL)|0,0,G-1),j1=clamp(((s.y+s.r)/CELL)|0,0,G-1);
     for(let j=j0;j<=j1;j++)for(let i=i0;i<=i1;i++){const dx=(i+0.5)*CELL-s.x,dy=(j+0.5)*CELL-s.y,d2=dx*dx+dy*dy;if(d2<r2)R[j*G+i]+=p*(1-d2/r2);}
   }
@@ -372,7 +443,8 @@ function shell(g,brain){
     val:new Float32Array([clamp(0.5+(g.taste||0),-1,1),clamp(0.5-(g.taste||0),-1,1)]), // learned value of gold, blue plants
     pw:new Float32Array(NH),prevHid:new Float32Array(NH), // the danger predictor, tuned by experience and not inherited
     sp:0,parentId:0,mateId:0,e:0,h:1,maxAge:0,r:3+g.size*3.2,maxE:100*g.size, // h: how much water its body holds, 0 to 1
-    ps:-1,p08:0,p03:0}; // the body size its cached powers belong to
+    ps:-1,p08:0,p03:0, // the body size its cached powers belong to
+    ef:-1,en:0,ech:0,ecd:0,esd:0,ecs:0,ess:0,ebx:0,eby:0}; // the field of view and eye count its cached eye directions belong to
   return c;
 }
 
@@ -399,7 +471,7 @@ function makeChild(w,p,q){
     speed:clamp(pick().g.speed+gauss(w)*m*0.4,0.3,2.5),
     sense:clamp(pick().g.sense+gauss(w)*m*25,20,220),
     diet:clamp(pick().g.diet+gauss(w)*m*0.25,0,1),
-    mut:clamp(pick().g.mut*Math.exp(gauss(w)*0.15),0.01,0.4),
+    mut:clamp(pick().g.mut*dexp(gauss(w)*0.15),0.01,0.4),
     eyes,
     fov:clamp(pick().g.fov+gauss(w)*m*1.2,0.5,6),
     learn:clamp(pick().g.learn+gauss(w)*m*0.02,0,0.06),
@@ -415,7 +487,7 @@ function makeChild(w,p,q){
   for(let o=0;o<NO;o++)b2[o]=pick().b2[o];
   for(const a of [w1,b1,w2,b2])for(let i=0;i<a.length;i++)if(rnd(w)<0.25)a[i]+=gauss(w)*m*2.5;
   const ang=rnd(w)*Math.PI*2,cx=q?(p.x+q.x)/2:p.x,cy=q?(p.y+q.y)/2:p.y;
-  const c=makeCreature(w,clamp(cx+Math.cos(ang)*p.r*2,5,W-5),clamp(cy+Math.sin(ang)*p.r*2,5,W-5),g,
+  const c=makeCreature(w,clamp(cx+dcos(ang)*p.r*2,5,W-5),clamp(cy+dsin(ang)*p.r*2,5,W-5),g,
     {w1,b1,w2,b2},(q?Math.max(p.gen,q.gen):p.gen)+1,p,0);
   if(q)c.mateId=q.id;
   return c;
@@ -542,14 +614,21 @@ function assignSpecies(w){
 function live(w,c,babies){
   c.age++;if(c.cool>0)c.cool--;if(c.rest>0)c.rest--;if(c.poisoned>0)c.poisoned--;
   if(c.sick>0){c.sick--;if(c.sick===0)c.immune=true;}
-  const g=c.g,inp=c.inp,B=w.buckets,ne=g.eyes,half=g.fov/2,sec=g.fov/ne,ch=Math.cos(half);
-  const ca=Math.cos(c.a),sa=Math.sin(c.a);
-  // each eye looks down the middle of its own slice of the field of view
+  const g=c.g,inp=c.inp,B=w.buckets,ne=g.eyes,half=g.fov/2,sec=g.fov/ne;
+  if(c.ef!==g.fov||c.en!==ne){ // where the eyes point, relative to the head, worked out once
+    const d0=0.5*sec-half;c.ef=g.fov;c.en=ne;
+    c.ech=dcos(half);c.ecd=dcos(d0);c.esd=dsin(d0);c.ecs=dcos(sec);c.ess=dsin(sec);c.ebx=dcos(sec-half);c.eby=dsin(sec-half);
+  }
+  const ch=c.ech,ca=dcos(c.a),sa=dsin(c.a);
+  // each eye looks down the middle of its own slice of the field of view: start at the first eye's
+  // direction and turn by one slice for each eye after it
   inp.fill(0,0,IE);
   const pd=g.sense*0.55;
+  let eyx=ca*c.ecd-sa*c.esd,eyy=sa*c.ecd+ca*c.esd;
   for(let e=0;e<ne;e++){
-    const an=c.a-half+(e+0.5)*sec,px=c.x+Math.cos(an)*pd,py=c.y+Math.sin(an)*pd;
+    const px=c.x+eyx*pd,py=c.y+eyy*pd;
     if(px>=0&&py>=0&&px<W&&py<W){const k=cellOf(px,py),b=e*PER_EYE;inp[b+SEE_FOOD]=w.plant[k]*c.val[w.ptype[k]];inp[b+SEE_WATER]=w.fresh[k];} // plants look as good as it has learned they are
+    const tx=eyx*c.ecs-eyy*c.ess;eyy=eyy*c.ecs+eyx*c.ess;eyx=tx;
   }
   const sr=g.sense,sr2=sr*sr;
   const bx0=clamp(((c.x-sr)/BUCKET)|0,0,BN-1),bx1=clamp(((c.x+sr)/BUCKET)|0,0,BN-1);
@@ -571,7 +650,10 @@ function live(w,c,babies){
       if(ready&&o.sp===c.sp&&o.rest===0&&o.age>MATURE&&o.e>o.maxE*0.5&&d<c.r+o.r+MATE_RANGE){const sc=mateScore(w,c,o);if(sc>mateS){mateS=sc;mate=o;}}
       if(!smaller&&!threat)continue;
       const fx=dx*ca+dy*sa;if(fx<d*ch)continue; // outside the sight cone
-      const b=Math.min(ne-1,((Math.atan2(dy*ca-dx*sa,fx)+half)/sec)|0)*PER_EYE;
+      // which eye sees it: count the borders between eyes it lies beyond, turning from one border to the next
+      const fy=dy*ca-dx*sa;let e=0,qx=c.ebx,qy=c.eby;
+      while(e<ne-1&&qx*fy-qy*fx>=0){const t=qx*c.ecs-qy*c.ess;qy=qy*c.ecs+qx*c.ess;qx=t;e++;}
+      const b=e*PER_EYE;
       if(smaller&&cl>inp[b+SEE_PREY])inp[b+SEE_PREY]=cl;
       if(threat&&cl>inp[b+SEE_HUNTER])inp[b+SEE_HUNTER]=cl;
     }
@@ -586,7 +668,7 @@ function live(w,c,babies){
   if(lr>0){const pr=lr*2;for(let h=0;h<NH;h++)c.pw[h]=clamp(c.pw[h]+pr*err*c.prevHid[h],-4,4);c.pb=clamp(c.pb+pr*err*2,-3,3);}
   inp[IE]=c.e/c.maxE;
   inp[IE+1]=waterAhead(w,c.x+ca*14,c.y+sa*14);
-  inp[IE+2]=Math.sin(c.age*0.12);
+  inp[IE+2]=dsin(c.age*0.12);
   inp[IE+3]=c.poisoned>0?1:0;
   inp[IE+4]=heardA;
   inp[IE+5]=heardB;
@@ -596,12 +678,12 @@ function live(w,c,babies){
   // think: a sense that reads zero adds nothing to a neuron, so only the senses that are on are summed
   const hid=c.hid,out=c.out,w1=c.w1,b1=c.b1;let non=0;
   for(let i=0;i<NI;i++)if(inp[i]!==0)ON[non++]=i;
-  for(let h=0;h<NH;h++){let s=b1[h];const o=h*NI;for(let j=0;j<non;j++){const i=ON[j];s+=w1[o+i]*inp[i];}hid[h]=Math.tanh(s);}
+  for(let h=0;h<NH;h++){let s=b1[h];const o=h*NI;for(let j=0;j<non;j++){const i=ON[j];s+=w1[o+i]*inp[i];}hid[h]=dtanh(s);}
   for(let k=0;k<NO;k++){
     let s;
     if(k===5){s=c.b2[5]+c.pb;for(let h=0;h<NH;h++)s+=c.pw[h]*hid[h];}
     else{s=c.b2[k];const o=k*NH;for(let h=0;h<NH;h++)s+=c.w2[o+h]*hid[h];}
-    out[k]=Math.tanh(s);
+    out[k]=dtanh(s);
   }
   c.prevHid.set(hid);
   c.pred=(out[5]+1)*0.5;
@@ -612,13 +694,13 @@ function live(w,c,babies){
   c.mem=out[4];
   const k0=cellOf(c.x,c.y),tt=w.terr[k0];
   const v=(out[1]+1)*0.5*g.speed*1.3*MOVE[tt]*(1-0.4*w.water[k0]/255)*(c.sick?0.7:1);
-  let nx=c.x+Math.cos(c.a)*v,ny=c.y+Math.sin(c.a)*v;
+  let nx=c.x+dcos(c.a)*v,ny=c.y+dsin(c.a)*v;
   if(nx<4||nx>W-4){c.a=Math.PI-c.a;nx=clamp(nx,4,W-4);}
   if(ny<4||ny>W-4){c.a=-c.a;ny=clamp(ny,4,W-4);}
   c.x=nx;c.y=ny;c.v=v;
   const s=g.size;
   // wide, long sight cones cost more to run, and so does every extra eye
-  if(c.ps!==s){c.ps=s;c.p08=Math.pow(s,0.8);c.p03=Math.pow(s,0.3);} // powers of the body size, worked out once
+  if(c.ps!==s){c.ps=s;c.p08=dpow(s,0.8);c.p03=dpow(s,0.3);} // powers of the body size, worked out once
   let cost=0.04*c.p08+0.028*v*v*s+0.0007*g.sense*(0.35+0.65*g.fov/3.4)+0.006+0.002*ne+0.022*g.diet+0.03*(c.sigA+c.sigB)+lr*1.5+0.008*g.orn; // a learning brain and a showy ornament both cost energy
   if(c.sick)cost+=0.07;
   if(tt===DEEP)cost+=0.12;
@@ -834,7 +916,7 @@ function sampleMinds(w){
 
 /* How attractive o looks to c. An ornament only shines on a well-fed body, so showy partners also
    tend to be good foragers. Some luck is involved. */
-function mateScore(w,c,o){return Math.exp(c.g.pref*o.g.orn*clamp(o.e/o.maxE,0,1)*10)*(0.85+0.3*rnd(w));}
+function mateScore(w,c,o){return dexp(c.g.pref*o.g.orn*clamp(o.e/o.maxE,0,1)*10)*(0.85+0.3*rnd(w));}
 
 /* Darwin's mechanism, made measurable. For each heritable trait we compare the parents of every
    grazer born recently with the grazer population as a whole. If parents are bigger than average,
@@ -1196,7 +1278,7 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     W, G, CELL, NI, NH, NO, IE, MAX_EYES, PER_EYE, SEE_FOOD, SEE_PREY, SEE_HUNTER, SEE_WATER, YEAR, CAP,
     DEEP, SHALLOW, SAND, GRASS, FOREST, ROCK, SEA, SPECIES_GAP, PLAGUE_TICKS, HYDRO_EVERY, ERODE_EVERY, REST, ROOTS, FORGET,
-    act, encodeActions, decodeActions, toB64, fromB64, geneDistance, SCENARIOS, scenarioOf,
+    dsin, dcos, dexp, dlog, dpow, dtanh, act, encodeActions, decodeActions, toB64, fromB64, geneDistance, SCENARIOS, scenarioOf,
     makeWorld, step, census, assignSpecies, distTo, meteor, rain, dropHunters, startPlague, hydro, erode, reshape, isLake,
     makeChild, spawnGroup, nameFor, seasonOf, yearOf, days, cellOf, terrAt, plantAt, pairShare, serialize, deserialize, rnd, warmth,
     clamp, CALL_NAMES, PLANT_NAMES, SEL_TRAITS, plantKinds, analyzeMinds, sampleMinds, freshMind, avgLearn, avgTrait,

@@ -91,7 +91,8 @@ function compare(exp,series){
 function chance(same,n){
   let s=0,c=1;
   for(let k=0;k<=n;k++){if(k>=same)s+=c;c=c*(n-k)/(k+1);}
-  return Math.min(1,2*s/2**n);
+  let all=1;for(let k=0;k<n;k++)all*=2; // 2 to the n, by doubling, which is exact in every engine
+  return Math.min(1,2*s/all);
 }
 
 /* The result in words, for one measure. A difference counts as clear only when chance alone would

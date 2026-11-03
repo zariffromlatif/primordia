@@ -1,8 +1,7 @@
 name: Test
 
 on:
-  push:
-    branches: [main]
+  push: # every branch, so work can be checked in every engine before it reaches main
   pull_request:
 
 jobs:
