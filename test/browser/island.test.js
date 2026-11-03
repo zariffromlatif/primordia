@@ -103,6 +103,16 @@ test("a split link opens the scenario, and keeps it while tools are used", { tim
   await page.close();
 });
 
+test("an archipelago link opens the scenario, and says so", { timeout: 60000 }, async () => {
+  const page = await env.open("#isles-1005");
+  await until(() => page.textContent("#seedline").then(t => t.startsWith("This is archipelago 1005.") && t.includes("four rich islands")), 10000, "the seed line");
+  await until(() => tick(page).then(t => t > 20), 15000, "the archipelago to run");
+  assert.equal(await page.evaluate(() => location.hash), "#isles-1005");
+  assert.ok(+(await page.textContent("#s-herb")) > 0, "grazers are counted");
+  assert.deepEqual(page.errors, []);
+  await page.close();
+});
+
 test("opened straight from disk, the island still runs", { timeout: 60000 }, async () => {
   const page = await env.open(env.fileUrl("index.html") + "#island-5");
   await until(() => tick(page).then(t => t > 20), 15000, "the island to run");

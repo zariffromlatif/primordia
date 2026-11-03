@@ -42,14 +42,16 @@ test("without workers, a short experiment runs in the page to a verdict, a chart
 test("opened straight from disk, the experiments page still sets itself up", { timeout: 30000 }, async () => {
   const page = await env.open(env.fileUrl("experiments.html"));
   await until(() => page.textContent("#engine").then(t => /at a time/.test(t)), 10000, "the engine note");
-  assert.equal(await page.$$eval("#experiments .xp", s => s.length), 3);
+  assert.equal(await page.$$eval("#experiments .xp", s => s.length), 4);
   assert.deepEqual(page.errors, []);
   await page.close();
 });
 
-test("the experiments page links to the islands where a species splits", { timeout: 30000 }, async () => {
+test("the experiments page links to the islands where a species splits, and to archipelagos where it becomes several", { timeout: 30000 }, async () => {
   const page = await env.open("experiments.html");
   const links = await page.$$eval("#watch .watch a", as => as.map(a => a.getAttribute("href")));
   assert.deepEqual(links, ["index.html#split-1014", "index.html#split-1015", "index.html#split-1019"]);
+  const isles = await page.$$eval("#watch-isles .watch a", as => as.map(a => a.getAttribute("href")));
+  assert.deepEqual(isles, ["index.html#isles-1005", "index.html#isles-1010", "index.html#isles-1004"]);
   await page.close();
 });

@@ -655,3 +655,66 @@ test("an island's history is pinned bit for bit, so it is the same in every brow
   ISLANDS.forEach((island, i) => assert.equal(fingerprint(sim, island), PINNED[i], "if you changed the simulation on purpose, run node test/fingerprint.js and update PINNED"));
 });
 
+test("an archipelago rises as four islands with open sea between them, all settled by one species", () => {
+  const w = sim.makeWorld(1003, [], sim.SCENARIOS.isles), I = sim.islesOf(w), per = [0, 0, 0, 0];
+  assert.equal(I.length, 4);
+  for (const c of w.creatures) { per[sim.isleAt(w, c.x, c.y)]++; assert.notEqual(sim.terrAt(w, c.x, c.y), sim.DEEP, "everyone starts on land"); }
+  assert.deepEqual(per, [30, 30, 30, 30], "30 on each island");
+  assert.equal(new Set(w.creatures.map(c => c.sp)).size, 1, "all one species");
+  for (const [a, b] of [[0, 1], [0, 2], [1, 3], [2, 3]]) {
+    const dx = I[b].x - I[a].x, dy = I[b].y - I[a].y, len = Math.hypot(dx, dy);
+    for (const f of [-40, 0, 40]) { // along the line between neighbours, through the middle of the strait
+      const x = ((I[a].x + I[b].x) / 2 + dx / len * f / sim.W) * sim.W, y = ((I[a].y + I[b].y) / 2 + dy / len * f / sim.W) * sim.W;
+      assert.equal(sim.terrAt(w, x, y), sim.DEEP, `deep sea between the ${I[a].name} and ${I[b].name} islands`);
+    }
+  }
+});
+
+test("driftwood carries a few grazers of one species to another island, and raft:false stops it", () => {
+  const run = rules => {
+    const w = sim.makeWorld(1003, [], rules);
+    while (w.tick < 6000) {
+      const where = new Map(w.creatures.map(c => [c, sim.isleAt(w, c.x, c.y)])), seen = w.eventCount;
+      sim.step(w);
+      const news = w.events.slice(0, w.eventCount - seen).map(e => e.text).filter(t => t.startsWith("Driftwood"));
+      if (news.length) return { w, text: news[0], moved: w.creatures.filter(c => where.has(c) && where.get(c) !== sim.isleAt(w, c.x, c.y)) };
+    }
+    return null;
+  };
+  const r = run(sim.SCENARIOS.isles);
+  assert.ok(r, "driftwood came within six seasons");
+  const m = /^Driftwood carried (?:a grazer|(\d) grazers) of .+ from the ([a-z-]+) island to the ([a-z-]+) island\.$/.exec(r.text);
+  assert.ok(m, r.text);
+  assert.notEqual(m[2], m[3]);
+  assert.equal(r.moved.length, m[1] ? Number(m[1]) : 1, "those grazers, and nobody else, changed island");
+  assert.ok(r.moved.length <= 5 && new Set(r.moved.map(c => c.sp)).size === 1, "up to five, all of one species");
+  for (const c of r.moved) assert.equal(sim.ISLE_NAMES[sim.isleAt(r.w, c.x, c.y)], m[3]);
+  assert.equal(run({ ...sim.SCENARIOS.isles, raft: false }), null, "no driftwood when it is switched off");
+});
+
+test("the archipelago gets no waves of hunters and no hard freezes", () => {
+  const freezes = rules => {
+    const w = sim.makeWorld(5, [], rules);
+    let n = 0;
+    for (let i = 0; i < 300; i++) { w.tick = 6500; w.climate = null; sim.rollClimate(w); if (w.climate && w.climate.kind === "freeze") n++; } // the start of a winter
+    return n;
+  };
+  assert.ok(freezes({}) > 10, "the usual island has hard freezes");
+  assert.equal(freezes(sim.SCENARIOS.isles), 0, "the sea keeps them off the archipelago");
+  const w = sim.makeWorld(1003, [], sim.SCENARIOS.isles);
+  let crowded = false;
+  while (w.tick < 1700) { sim.step(w); if (w.tick > 1500 && w.nHerb > 80) crowded = true; }
+  assert.ok(crowded, "plenty of grazers, which on the usual island would bring hunters");
+  assert.equal(w.nCarn, 0);
+  assert.ok(!w.events.some(e => e.text.includes("washed ashore")));
+});
+
+test("a saved archipelago loads and carries on exactly as the original, driftwood and all", () => {
+  const a = sim.makeWorld(1005, [], sim.SCENARIOS.isles);
+  for (let i = 0; i < 700; i++) sim.step(a);
+  const b = sim.deserialize(JSON.parse(JSON.stringify(sim.serialize(a))));
+  assert.deepEqual(b.rules, sim.SCENARIOS.isles);
+  for (let i = 0; i < 2000; i++) { sim.step(a); sim.step(b); } // through two more seasons' driftwood
+  assert.equal(JSON.stringify(sim.serialize(b)), JSON.stringify(sim.serialize(a)));
+});
+

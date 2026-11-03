@@ -14,6 +14,9 @@ const SAMPLE=100; // ticks between measurements: one day
    twins with no reading at all in the final year. */
 const halves=w=>{const g=w.creatures.filter(c=>!c.dead&&c.g.diet<=0.5);return[g.filter(c=>c.x<W/2),g.filter(c=>c.x>=W/2)];};
 const spread=(a,n)=>a.length<=n?a:Array.from({length:n},(_,i)=>a[Math.floor(i*a.length/n)]);
+/* On an archipelago: each island's grazers, counted by species. */
+const byIsle=w=>{const per=islesOf(w).map(()=>new Map());for(const c of w.creatures)if(!c.dead&&c.g.diet<=0.5){const m=per[isleAt(w,c.x,c.y)];m.set(c.sp,(m.get(c.sp)||0)+1);}return per;};
+const rootOf=(w,id)=>{let s=w.species.get(id);while(s&&s.parentId)s=w.species.get(s.parentId);return s?s.id:0;};
 const MEASURES={
   grazers:{label:"Grazers",unit:"",digits:0,get:w=>w.nHerb},
   know:{label:"Grazers that know the safe plant",unit:"%",digits:0,get:w=>w.know*100},
@@ -34,6 +37,21 @@ const MEASURES={
       for(const [side,h] of[[0,A],[1,B]])for(const c of h){const v=n.get(c.sp)||[0,0];v[side]++;n.set(c.sp,v);}
       let both=0;for(const [a,b] of n.values())if(a>=3&&b>=3)both+=a+b;
       return A.length+B.length?both/(A.length+B.length)*100:NaN;
+    }},
+  radiation:{label:"Species the founders have become",unit:"",digits:1,
+    about:"Living species descended from the one species that settled the islands, counting each that has at least 5 grazers on an island.",
+    get:w=>{
+      let first=Infinity;for(const id of w.species.keys())if(id<first)first=id; // the founders' species was named first
+      const kin=new Set();for(const m of byIsle(w))for(const [sp,n] of m)if(n>=5&&rootOf(w,sp)===first)kin.add(sp);
+      return kin.size;
+    }},
+  wide:{label:"Grazers whose species lives on more than one island",unit:"%",digits:0,
+    about:"A species counts as living on an island when at least 3 of its members are there.",
+    get:w=>{
+      const per=byIsle(w),on=new Map();let all=0,wide=0;
+      for(const m of per)for(const [sp,n] of m){all+=n;if(n>=3)on.set(sp,(on.get(sp)||0)+1);}
+      for(const m of per)for(const [sp,n] of m)if(on.get(sp)>=2)wide+=n;
+      return all?wide/all*100:NaN;
     }}
 };
 
@@ -53,7 +71,11 @@ const EXPERIMENTS=[
     about:"Twins live their first year as one island made of two long halves joined by land. Then the sea floods the middle of one twin and cuts it in two. Do the halves go their own ways?",
     note:"What this shows, and what it doesn't: the halves of a cut island end up home to different species, but often because one half crashes and is recolonised by newcomers, not because one species splits in two. After one year, one lineage seldom holds the whole island yet. When the sea comes later, one species does sometimes become two (see below).",
     arms:[{label:"Joined",rules:{land:"two"}},{label:"Cut in two",rules:{land:"two",flood:YEAR}}],
-    measures:["apart","shared"],years:5,islands:10}
+    measures:["apart","shared"],years:5,islands:10},
+  {id:"driftwood",question:"Does driftwood hold a species together?",
+    about:"Twins are archipelagos of four rich islands, all settled by one species. On one of each pair, driftwood now and then carries a few grazers from one island to another; on the other, the islands are cut off for good.",
+    arms:[{label:"Driftwood",rules:{...SCENARIOS.isles}},{label:"No driftwood",rules:{...SCENARIOS.isles,raft:false}}],
+    measures:["radiation","wide"],years:10,islands:10}
 ];
 
 function experiment(id){return EXPERIMENTS.find(x=>x.id===id)||null;}

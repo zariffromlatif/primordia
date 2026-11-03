@@ -10,7 +10,8 @@
     "test:browser": "node --test test/browser/*.test.js",
     "ecology": "node tools/ecology.js",
     "experiment": "node tools/experiment.js",
-    "speciation": "node tools/speciation.js"
+    "speciation": "node tools/speciation.js",
+    "archipelago": "node tools/archipelago.js"
   },
   "engines": {
     "node": ">=20"

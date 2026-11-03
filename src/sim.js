@@ -193,9 +193,11 @@ function initWorld(seed,height,fnoise){
 /* A new island from its seed, plus any recorded actions to replay as their ticks come round, and
    any rules an experiment changes: genes fixed at a value for everyone born; poison:false; land:"two" for two
    long islands, west and east, joined by land; flood, a tick on which the sea floods the land between them;
-   and rich, how many times faster plants grow and how many times more a bite of one is worth. */
+   land:"isles" for an archipelago of four islands, all settled by one species, with raft:false to stop
+   driftwood carrying grazers between them; and rich, how many times faster plants grow and how many
+   times more a bite of one is worth. */
 function makeWorld(seed,actions,rules){
-  const land=rules&&rules.land;
+  const land=rules&&rules.land,isles=land==="isles"?isleCentres(seed):null;
   const r=mulberry32(seed);
   const N=256,lat=new Float32Array(N*N);for(let i=0;i<lat.length;i++)lat[i]=r();
   const sm=t=>t*t*(3-2*t);
@@ -208,10 +210,12 @@ function makeWorld(seed,actions,rules){
   const height=new Float32Array(G*G),fnoise=new Float32Array(G*G),start=new Float32Array(G*G);
   for(let j=0;j<G;j++)for(let i=0;i<G;i++){
     const k=j*G+i,nx=(i+0.5)/G,ny=(j+0.5)/G,dx=nx-0.5,dy=ny-0.5;
-    const ax=(nx-0.29)/0.19,bx=(nx-0.71)/0.19,ey=dy/0.5; // two halves: the distance to the nearer one's centre
-    const d=land?Math.sqrt(Math.min(ax*ax,bx*bx)+ey*ey):Math.sqrt(dx*dx+dy*dy)*2;
+    let d;
+    if(isles){d=1e9;for(const c of isles){const ix=(nx-c.x)/c.r,iy=(ny-c.y)/c.r;d=Math.min(d,ix*ix+iy*iy);}d=Math.sqrt(d);} // how far out from the nearest island's centre
+    else{const ax=(nx-0.29)/0.19,bx=(nx-0.71)/0.19,ey=dy/0.5;d=land?Math.sqrt(Math.min(ax*ax,bx*bx)+ey*ey):Math.sqrt(dx*dx+dy*dy)*2;} // two halves: the distance to the nearer one's centre
     let h=fbm(nx*3.4,ny*3.4)*1.15-d*d*0.46+0.1;
-    if(land&&Math.abs(dx)<0.045&&Math.abs(dy)<0.38)h=Math.max(h,0.46); // the land that joins them, which a flood can take
+    if(isles){h+=0.08;if(d>0.92)h-=(d-0.92)*3;if(d>1)h=Math.min(h,0.26);} // each island slopes down to open sea, at least 100 units of it between neighbours
+    if(land==="two"&&Math.abs(dx)<0.045&&Math.abs(dy)<0.38)h=Math.max(h,0.46); // the land that joins them, which a flood can take
     height[k]=h;
     fnoise[k]=0.7+0.6*r();
     start[k]=0.3+0.6*r();
@@ -223,16 +227,74 @@ function makeWorld(seed,actions,rules){
   for(let k=0;k<G*G;k++){w.plant[k]=w.fert[k]*start[k];w.moist[k]=w.terr[k]<=SHALLOW?1:0.5;}
   for(let i=0;i<20;i++)hydro(w,true); // let the rivers find their beds before anything lives here
   w.toxic=rnd(w)<0.5?0:1;
-  for(let i=0;i<6;i++)spawnGroup(w,"herb",20);
+  if(isles)settleIsles(w);else for(let i=0;i<6;i++)spawnGroup(w,"herb",20);
   census(w);
   w.learnStart=avgLearn(w);
   w.ornStart=avgTrait(w,"orn");
-  logEvent(w,`The island rose from the sea. Six species of grazers, 120 creatures with random brains, were released onto it. Its ${PLANT_NAMES[w.toxic]} plants are poisonous.`);
+  logEvent(w,isles?`Four islands rose from the sea. One species of grazers, 120 creatures with random brains, was released onto them, 30 on each island. Their ${PLANT_NAMES[w.toxic]} plants are poisonous.`
+    :`The island rose from the sea. Six species of grazers, 120 creatures with random brains, were released onto it. Its ${PLANT_NAMES[w.toxic]} plants are poisonous.`);
   sample(w);
   w.actions=(actions||[]).filter(a=>TOOLS.includes(a.tool)&&Number.isInteger(a.t)&&a.t>=0&&Number.isFinite(a.x)&&Number.isFinite(a.y))
     .map(a=>({t:a.t,tool:a.tool,x:Math.round(clamp(a.x,0,W-1)),y:Math.round(clamp(a.y,0,W-1))})).sort((a,b)=>a.t-b.t);
   replayDue(w);
   return w;
+}
+
+/* ---------------- the archipelago ----------------
+   Four islands, one in each corner, each nudged a little by the seed. Positions are shares of the map,
+   and r is how far an island's ground can reach. They don't touch: open sea lies between them. */
+const ISLE_NAMES=["north-west","north-east","south-west","south-east"];
+function isleCentres(seed){
+  const r=mulberry32((seed^0x15E5A)>>>0);
+  return ISLE_NAMES.map((name,i)=>({name,x:(i%2?0.76:0.24)+(r()-0.5)*0.02,y:(i<2?0.24:0.76)+(r()-0.5)*0.02,r:0.195+r()*0.01}));
+}
+function islesOf(w){return w.isles||(w.isles=isleCentres(w.seed));}
+/* Which island a point belongs to: the one whose centre is nearest, counting in island radii. */
+function isleAt(w,x,y){
+  const I=islesOf(w),nx=x/W,ny=y/W;let best=0,bd=1e9;
+  for(let i=0;i<I.length;i++){const dx=(nx-I[i].x)/I[i].r,dy=(ny-I[i].y)/I[i].r,d=dx*dx+dy*dy;if(d<bd){bd=d;best=i;}}
+  return best;
+}
+function landOn(w,isle){
+  for(let tries=0;tries<400;tries++){
+    const x=(isle.x+(rnd(w)*2-1)*isle.r)*W,y=(isle.y+(rnd(w)*2-1)*isle.r)*W;
+    if(x<5||y<5||x>=W-5||y>=W-5)continue;
+    const k=cellOf(x,y),t=w.terr[k];
+    if((t===GRASS||t===FOREST||t===SAND)&&w.water[k]<255)return{x,y};
+  }
+  return{x:isle.x*W,y:isle.y*W};
+}
+/* One species on every island: a founder and its close relatives, 30 to an island. */
+function settleIsles(w){
+  const I=islesOf(w),g=randomGenome(w,false),p=landOn(w,I[0]);
+  const founder=makeCreature(w,p.x,p.y,g,randomBrain(w,false),0,null,60*g.size);
+  founder.sp=newSpecies(w,founder,null).id;w.creatures.push(founder);
+  I.forEach((isle,i)=>{
+    for(let n=i?0:1;n<30;n++){
+      const c=makeChild(w,founder),q=landOn(w,isle);
+      c.x=q.x;c.y=q.y;c.gen=0;c.parentId=0;c.e=Math.min(c.maxE,60*c.g.size);
+      w.creatures.push(c);
+    }
+  });
+}
+const RAFT_CHANCE=0.5; // each season
+/* Now and then a storm washes a few grazers out to sea on driftwood, and they come ashore on another
+   island: one grazer and up to four of its own species close by. */
+function raft(w){
+  if(rnd(w)>=RAFT_CHANCE)return;
+  const g=w.creatures.filter(c=>!c.dead&&c.g.diet<=0.5);if(!g.length)return;
+  const c=g[(rnd(w)*g.length)|0],I=islesOf(w),from=isleAt(w,c.x,c.y);
+  let to=(rnd(w)*(I.length-1))|0;if(to>=from)to++;
+  const crew=[c];
+  for(const o of g)if(o!==c&&o.sp===c.sp&&crew.length<5){const dx=o.x-c.x,dy=o.y-c.y;if(dx*dx+dy*dy<40*40)crew.push(o);}
+  const p=landOn(w,I[to]);
+  for(const o of crew){
+    let x=clamp(p.x+gauss(w)*10,5,W-5),y=clamp(p.y+gauss(w)*10,5,W-5);
+    if(terrAt(w,x,y)===DEEP){x=p.x;y=p.y;}
+    o.x=x;o.y=y;
+  }
+  const sp=w.species.get(c.sp);
+  logEvent(w,`Driftwood carried ${crew.length===1?"a grazer":`${crew.length} grazers`} of ${sp?sp.name:"the islands"} from the ${I[from].name} island to the ${I[to].name} island.`);
 }
 
 function randomLand(w){
@@ -845,7 +907,8 @@ function rollClimate(w){
   const t=w.tick,q=seasonOf(t);
   if(!w.climate&&t>3000){
     const r=rnd(w);
-    const kind=q===1&&r<0.2?"drought":q===0&&r<0.16?"bloom":q===3&&r<0.14?"freeze":null;
+    let kind=q===1&&r<0.2?"drought":q===0&&r<0.16?"bloom":q===3&&r<0.14?"freeze":null;
+    if(kind==="freeze"&&w.rules.land==="isles")kind=null; // the sea around small islands keeps hard freezes away
     if(kind){const C=CLIMATES[kind];w.climate={kind,label:C.label,mul:C.mul,until:t+C.len,end:C.end};logEvent(w,C.start);}
   }
   if(t>6000&&w.creatures.length>150&&!w.plagueActive&&rnd(w)<0.05){
@@ -994,6 +1057,7 @@ function step(w){
     rollClimate(w);
     // each season, a coin flip may switch which plants are poisonous
     if(rnd(w)<0.5&&w.rules.poison!==false){w.toxic=1-w.toxic;w.poisonFlips++;logEvent(w,`The ${PLANT_NAMES[w.toxic]} plants have turned poisonous, and the ${PLANT_NAMES[1-w.toxic]} ones are safe again.`);}
+    if(w.rules.land==="isles"&&w.rules.raft!==false)raft(w);
   }
   const sv=warmth(t);w.season=sv;
   weather(w);
@@ -1024,7 +1088,9 @@ function step(w){
   if(herb>60)w.lowHerbLogged=false;
   if(carn===0&&w.hadCarn){logEvent(w,"The last hunter died. Grazers have the island to themselves, for now.");w.hadCarn=false;}
   if(carn>0)w.hadCarn=true;
-  if(carn===0&&t>1500&&herb>80&&t-w.lastCarnArrival>3000){
+  // Hunters don't wash ashore on the archipelago: driftwood seldom carries them so far out, and remote
+  // islands, like the Galápagos, have few predators. There hunters only evolve, or are dropped in.
+  if(w.rules.land!=="isles"&&carn===0&&t>1500&&herb>80&&t-w.lastCarnArrival>3000){
     const sp=spawnGroup(w,"carn",5);
     w.lastCarnArrival=t;w.hadCarn=true;
     logEvent(w,`Five hunters of a new species, ${sp.name}, washed ashore on driftwood.`);
@@ -1103,9 +1169,10 @@ function startPlague(w,x,y,message){
 
 /* Everything a person does to an island is recorded with the tick it happened on, so a link can
    replay it at the same moment. Positions are rounded to whole units, live and replayed alike. */
-/* Islands a link can name: #island-42 is the usual one, and #split-42 a rich island that the sea cuts
-   in two after three years, where one species can become two (see tools/speciation.js). */
-const SCENARIOS={island:{},split:{land:"two",flood:3*YEAR,rich:2}};
+/* Islands a link can name: #island-42 is the usual one, #split-42 a rich island that the sea cuts in
+   two after three years, where one species can become two (see tools/speciation.js), and #isles-42 an
+   archipelago of four rich islands settled by one species, which becomes several (tools/archipelago.js). */
+const SCENARIOS={island:{},split:{land:"two",flood:3*YEAR,rich:2},isles:{land:"isles",rich:2}};
 function scenarioOf(rules){const r=JSON.stringify(rules||{});return Object.keys(SCENARIOS).find(k=>JSON.stringify(SCENARIOS[k])===r)||null;}
 
 const TOOL_CODES={feed:"f",rain:"r",hunters:"h",meteor:"m",plague:"p"},TOOLS=Object.keys(TOOL_CODES);
@@ -1186,7 +1253,7 @@ const WORLD_SHAPE={
   sel:{births:"n",popN:"n",par:TRAITS,pop:TRAITS,sq:TRAITS},selection:orNull({"*":{s:"n",mean:"n"}}),selTrend:{"*":nums("dir n last")},
   struggle:orNull("n"),ornStart:"n",ornLogged:"b",fedLogged:"b",deathsNoKids:"n",deathsAll:"n",
   rules:v=>v===undefined||rulesOK(v)}; // files saved before rules were kept have none
-const RULE_SHAPES={genes:{"*":"n"},poison:"b",land:oneOf("two"),flood:"i",rich:v=>Number.isFinite(v)&&v>0&&v<=10};
+const RULE_SHAPES={genes:{"*":"n"},poison:"b",land:oneOf("two","isles"),raft:"b",flood:"i",rich:v=>Number.isFinite(v)&&v>0&&v<=10};
 function rulesOK(v){return !!v&&typeof v==="object"&&!Array.isArray(v)&&Object.keys(v).every(k=>Object.hasOwn(RULE_SHAPES,k)&&fits(v[k],RULE_SHAPES[k]));}
 const CREATURE_SHAPE={id:"i",x:"n",y:"n",a:"n",gen:"n",age:"n",kids:"n",kills:"n",cool:"n",rest:"n",wait:"n",v:"n",sigA:"n",sigB:"n",mem:"n",
   sick:"n",immune:"b",dead:"b",cause:"s",sp:"i",parentId:"i",mateId:"i",e:"n",h:"n",maxAge:"n",pred:"n",pb:"n",surprise:"n",fear:"n",rBar:"n",mood:"n",
@@ -1280,7 +1347,7 @@ if (typeof module !== "undefined" && module.exports) {
     DEEP, SHALLOW, SAND, GRASS, FOREST, ROCK, SEA, SPECIES_GAP, PLAGUE_TICKS, HYDRO_EVERY, ERODE_EVERY, REST, ROOTS, FORGET,
     dsin, dcos, dexp, dlog, dpow, dtanh, act, encodeActions, decodeActions, toB64, fromB64, geneDistance, SCENARIOS, scenarioOf,
     makeWorld, step, census, assignSpecies, distTo, meteor, rain, dropHunters, startPlague, hydro, erode, reshape, isLake,
-    makeChild, spawnGroup, nameFor, seasonOf, yearOf, days, cellOf, terrAt, plantAt, pairShare, serialize, deserialize, rnd, warmth,
+    makeChild, spawnGroup, isleCentres, islesOf, isleAt, ISLE_NAMES, rollClimate, nameFor, seasonOf, yearOf, days, cellOf, terrAt, plantAt, pairShare, serialize, deserialize, rnd, warmth,
     clamp, CALL_NAMES, PLANT_NAMES, SEL_TRAITS, plantKinds, analyzeMinds, sampleMinds, freshMind, avgLearn, avgTrait,
     analyzeSelection, recordParents, samplePopulation, freshSel, feedCreature, mateScore,
   };
