@@ -52,6 +52,6 @@ test("the experiments page links to the islands where a species splits, and to a
   const links = await page.$$eval("#watch .watch a", as => as.map(a => a.getAttribute("href")));
   assert.deepEqual(links, ["index.html#split-1014", "index.html#split-1015", "index.html#split-1019"]);
   const isles = await page.$$eval("#watch-isles .watch a", as => as.map(a => a.getAttribute("href")));
-  assert.deepEqual(isles, ["index.html#isles-1005", "index.html#isles-1010", "index.html#isles-1004"]);
+  assert.deepEqual(isles, ["index.html#isles-1001", "index.html#isles-1009", "index.html#isles-1013"]);
   await page.close();
 });

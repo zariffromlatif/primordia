@@ -73,7 +73,7 @@ const EXPERIMENTS=[
     arms:[{label:"Joined",rules:{land:"two"}},{label:"Cut in two",rules:{land:"two",flood:YEAR}}],
     measures:["apart","shared"],years:5,islands:10},
   {id:"driftwood",question:"Does driftwood hold a species together?",
-    about:"Twins are archipelagos of four rich islands, all settled by one species. On one of each pair, driftwood now and then carries a few grazers from one island to another; on the other, the islands are cut off for good.",
+    about:"Twins are archipelagos of four islands, all settled by one species. On one of each pair, driftwood now and then carries a few grazers from one island to another; on the other, the islands are cut off for good.",
     arms:[{label:"Driftwood",rules:{...SCENARIOS.isles}},{label:"No driftwood",rules:{...SCENARIOS.isles,raft:false}}],
     measures:["radiation","wide"],years:10,islands:10}
 ];

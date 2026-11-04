@@ -1,6 +1,6 @@
 "use strict";
 /*
- * Does one species become several on an archipelago? Runs the "isles" scenario headless: four rich
+ * Does one species become several on an archipelago? Runs the "isles" scenario headless: four
  * islands, all settled by one species, with driftwood now and then carrying a few grazers from one
  * island to another. Every year it notes, for each island, its grazers and the species living there (at least
  * 5 of them), and at the end it counts the species descended from the founders: how many there are,

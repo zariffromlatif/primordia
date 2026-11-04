@@ -718,3 +718,19 @@ test("a saved archipelago loads and carries on exactly as the original, driftwoo
   assert.equal(JSON.stringify(sim.serialize(b)), JSON.stringify(sim.serialize(a)));
 });
 
+test("each island of an archipelago grows about as much gold as blue, and the usual island keeps its colours", () => {
+  for (const seed of [1001, 1005]) {
+    const w = sim.makeWorld(seed, [], sim.SCENARIOS.isles), gold = [0, 0, 0, 0], all = [0, 0, 0, 0];
+    for (let k = 0; k < sim.G * sim.G; k++) {
+      if (w.terr[k] < sim.SAND) continue;
+      const i = sim.isleAt(w, (k % sim.G + 0.5) * sim.CELL, (Math.floor(k / sim.G) + 0.5) * sim.CELL);
+      all[i]++; if (w.ptype[k] === 0) gold[i]++;
+    }
+    for (let i = 0; i < 4; i++) assert.ok(Math.abs(gold[i] / all[i] - 0.5) < 0.15, `archipelago ${seed}, ${sim.ISLE_NAMES[i]} island: ${(gold[i] / all[i] * 100).toFixed(0)}% gold`);
+    const loaded = sim.deserialize(JSON.parse(JSON.stringify(sim.serialize(w))));
+    assert.deepEqual(Array.from(loaded.ptype), Array.from(w.ptype), "a loaded archipelago grows the same colours");
+  }
+  const u = sim.makeWorld(1001, [], {}), noise = sim.plantNoise(1001);
+  assert.ok(Array.from(u.ptype).every((t, k) => t === (noise[k] > 0.5 ? 1 : 0)), "the usual island is split as before");
+});
+

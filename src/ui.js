@@ -649,7 +649,7 @@ function updateSeedLine(){
   const n=actions.length;
   $("#seedline").textContent=!replayable
     ?`This is island ${seed}, loaded from a save made before actions were recorded, so its link only replays how the island began.`
-    :`This is ${scenario==="isles"?"archipelago":"island"} ${seed}${n?` with ${n} recorded action${n===1?"":"s"}`:""}.${scenario==="split"?" It's a rich island that the sea cuts in two after three years.":scenario==="isles"?" Its four rich islands were all settled by one species, and driftwood now and then carries a few grazers between them.":""} Its link replays the island and its whole history${n?", including everything done to it":""}.`;
+    :`This is ${scenario==="isles"?"archipelago":"island"} ${seed}${n?` with ${n} recorded action${n===1?"":"s"}`:""}.${scenario==="split"?" It's a rich island that the sea cuts in two after three years.":scenario==="isles"?" Its four islands were all settled by one species, and driftwood now and then carries a few grazers between them.":""} Its link replays the island and its whole history${n?", including everything done to it":""}.`;
 }
 
 let noticeTimer=0;
