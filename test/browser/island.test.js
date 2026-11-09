@@ -113,6 +113,15 @@ test("an archipelago link opens the scenario, and says so", { timeout: 60000 }, 
   await page.close();
 });
 
+test("a mixed archipelago link opens the scenario, and says so", { timeout: 60000 }, async () => {
+  const page = await env.open("#mixed-1033");
+  await until(() => page.textContent("#seedline").then(t => t.startsWith("This is archipelago 1033.") && t.includes("great island")), 10000, "the seed line");
+  await until(() => tick(page).then(t => t > 20), 15000, "the archipelago to run");
+  assert.equal(await page.evaluate(() => location.hash), "#mixed-1033");
+  assert.deepEqual(page.errors, []);
+  await page.close();
+});
+
 test("opened straight from disk, the island still runs", { timeout: 60000 }, async () => {
   const page = await env.open(env.fileUrl("index.html") + "#island-5");
   await until(() => tick(page).then(t => t > 20), 15000, "the island to run");

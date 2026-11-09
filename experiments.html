@@ -39,6 +39,17 @@
     </ul>
     <p class="muted small">Set the speed to 40× and watch the family tree branch, and the log for driftwood landing. Tap a species to follow one of its members.</p>
   </section>
+  <section class="xp" id="watch-sizes">
+    <h2>Do bigger islands hold more species?</h2>
+    <p>Across real archipelagos, bigger islands hold more species: ten times the area typically holds about twice as many. This archipelago has one great island in the west and three small ones in the east, between four and eleven times smaller, all settled by one species, with driftwood between them as above.</p>
+    <p class="note">Running 40 of these archipelagos headless with <code>npm run species-area</code>, the great island held 1.45 species on average over the tenth year, against 0.83 to 0.90 on the small islands, which also lost all their grazers 1.3 to 1.6 times in ten years while the great island almost never did. In 33 archipelagos the great island held more species than the smallest island, in 3 fewer, and in 4 the same; chance alone would do that less than 1 time in 100. Species grew with area as area to the power 0.20, at the low end of what real islands show.</p>
+    <ul class="watch">
+      <li><a href="index.html#mixed-1033">Archipelago 1033</a>: after ten years, five species on the great island and one on each small island</li>
+      <li><a href="index.html#mixed-1019">Archipelago 1019</a>: four species on the great island, two on one small island and none on another</li>
+      <li><a href="index.html#mixed-1030">Archipelago 1030</a>: three species on the great island, one on two of the small islands and none on the third</li>
+    </ul>
+    <p class="muted small">Set the speed to 40× and compare the islands. The small ones empty and are settled again by driftwood, while the great island keeps several species side by side.</p>
+  </section>
 </main>
 <script src="src/sim.js"></script>
 <script src="src/experiments.js"></script>

@@ -198,7 +198,7 @@ function initWorld(seed,height,fnoise){
    driftwood carrying grazers between them; and rich, how many times faster plants grow and how many
    times more a bite of one is worth. */
 function makeWorld(seed,actions,rules){
-  const land=rules&&rules.land,isles=land==="isles"?isleCentres(seed):null;
+  const land=rules&&rules.land,isles=archipelagoOf(seed,land);
   const r=mulberry32(seed);
   const N=256,lat=new Float32Array(N*N);for(let i=0;i<lat.length;i++)lat[i]=r();
   const sm=t=>t*t*(3-2*t);
@@ -209,12 +209,21 @@ function makeWorld(seed,actions,rules){
   const ox=r()*100,oy=r()*100;
   const fbm=(x,y)=>{let s=0,amp=0.5,f=1,n=0;for(let o=0;o<5;o++){s+=amp*noise(x*f+ox+o*31.7,y*f+oy+o*17.3);n+=amp;amp*=0.5;f*=2;}return s/n;};
   const height=new Float32Array(G*G),fnoise=new Float32Array(G*G),start=new Float32Array(G*G);
+  // Islands of mixed sizes each rise about as far out of the sea: the noise is shifted island by island so its
+  // middle value over the island's heart is the same everywhere. The noise is sized for one big island, and
+  // otherwise a small island falling in a low patch could be little more than a rock.
+  let lift=null;
+  if(land==="mixed"){
+    const lists=isles.map(()=>[]);
+    for(let j=0;j<G;j++)for(let i=0;i<G;i++){const nx=(i+0.5)/G,ny=(j+0.5)/G;for(let q=0;q<isles.length;q++)if(isleReach(isles[q],nx,ny)<0.8){lists[q].push(fbm(nx*3.4,ny*3.4));break;}}
+    lift=lists.map(l=>{l.sort((a,b)=>a-b);return 0.5-l[l.length>>1];});
+  }
   for(let j=0;j<G;j++)for(let i=0;i<G;i++){
     const k=j*G+i,nx=(i+0.5)/G,ny=(j+0.5)/G,dx=nx-0.5,dy=ny-0.5;
-    let d;
-    if(isles){d=1e9;for(const c of isles)d=Math.min(d,isleReach(c,nx,ny));} // how far out from the nearest island's centre
+    let d,near=0;
+    if(isles){d=1e9;for(let q=0;q<isles.length;q++){const e=isleReach(isles[q],nx,ny);if(e<d){d=e;near=q;}}} // how far out from the nearest island's centre
     else{const ax=(nx-0.29)/0.19,bx=(nx-0.71)/0.19,ey=dy/0.5;d=land?Math.sqrt(Math.min(ax*ax,bx*bx)+ey*ey):Math.sqrt(dx*dx+dy*dy)*2;} // two halves: the distance to the nearer one's centre
-    let h=fbm(nx*3.4,ny*3.4)*1.15-d*d*0.46+0.1;
+    let h=(fbm(nx*3.4,ny*3.4)+(lift?lift[near]:0))*1.15-d*d*0.46+0.1;
     if(isles){h+=0.08;if(d>0.92)h-=(d-0.92)*3;if(d>1)h=Math.min(h,0.26);} // each island slopes down to open sea, at least 100 units of it between neighbours
     if(land==="two"&&Math.abs(dx)<0.045&&Math.abs(dy)<0.38)h=Math.max(h,0.46); // the land that joins them, which a flood can take
     height[k]=h;
@@ -249,11 +258,22 @@ function makeWorld(seed,actions,rules){
 const ISLE_NAMES=["north-west","north-east","south-west","south-east"];
 function isleCentres(seed){
   const r=mulberry32((seed^0x15E5A)>>>0);
-  return ISLE_NAMES.map((name,i)=>({name,x:(i%2?0.765:0.235)+(r()-0.5)*0.02,y:(i<2?0.235:0.765)+(r()-0.5)*0.02,r:0.21+r()*0.01}));
+  return ISLE_NAMES.map((name,i)=>{const x=(i%2?0.765:0.235)+(r()-0.5)*0.02,y=(i<2?0.235:0.765)+(r()-0.5)*0.02,R=0.21+r()*0.01;return{name,x,y,rx:R,ry:R};});
 }
+/* Islands of very different sizes: a great island filling the west of the map, and three small ones
+   down the east side, which share it out differently on every seed. About 100 units of sea lie
+   between neighbours here too. */
+function mixedIsles(seed){
+  const r=mulberry32((seed^0x5EED5)>>>0),parts=[1+r(),1+r(),1+r()],all=parts[0]+parts[1]+parts[2]; // no island gets less than a fifth of the east side
+  let top=0.03;
+  const small=["north-east","east","south-east"].map((name,i)=>{const h=parts[i]/all*0.74;const o={name,x:0.81,y:top+h/2,rx:0.16,ry:h/2};top+=h+0.1;return o;});
+  return[{name:"west",x:0.29,y:0.5,rx:0.26,ry:0.47},...small];
+}
+function archipelagoOf(seed,land){return land==="isles"?isleCentres(seed):land==="mixed"?mixedIsles(seed):null;}
+function onIsles(w){return w.rules.land==="isles"||w.rules.land==="mixed";}
 /* How far out a point is from an island's centre, in island radii, measured so that the island is a
    rounded square: 1 is the edge of its reach. Points are shares of the map. */
-function isleReach(c,nx,ny){const ix=(nx-c.x)/c.r,iy=(ny-c.y)/c.r,a=ix*ix,b=iy*iy;return Math.sqrt(Math.sqrt(a*a+b*b));}
+function isleReach(c,nx,ny){const ix=(nx-c.x)/c.rx,iy=(ny-c.y)/c.ry,a=ix*ix,b=iy*iy;return Math.sqrt(Math.sqrt(a*a+b*b));}
 /* Each island grows as much gold as blue. The plant patches are sized for one big island, so a small
    one could be mostly one colour and have little safe food whenever that colour turned poisonous;
    here each island's patches are split at its own middle value instead. Like the usual colours,
@@ -267,16 +287,16 @@ function balanceIsles(w){
   const mid=lists.map(l=>{l.sort((a,b)=>a-b);return l[l.length>>1];});
   for(let k=0;k<G*G;k++)if(own[k]>=0)w.ptype[k]=v[k]>mid[own[k]]?1:0;
 }
-function islesOf(w){return w.isles||(w.isles=isleCentres(w.seed));}
+function islesOf(w){return w.isles||(w.isles=archipelagoOf(w.seed,w.rules&&w.rules.land)||isleCentres(w.seed));}
 /* Which island a point belongs to: the one whose centre is nearest, counting in island radii. */
 function isleAt(w,x,y){
   const I=islesOf(w),nx=x/W,ny=y/W;let best=0,bd=1e9;
-  for(let i=0;i<I.length;i++){const dx=(nx-I[i].x)/I[i].r,dy=(ny-I[i].y)/I[i].r,d=dx*dx+dy*dy;if(d<bd){bd=d;best=i;}}
+  for(let i=0;i<I.length;i++){const dx=(nx-I[i].x)/I[i].rx,dy=(ny-I[i].y)/I[i].ry,d=dx*dx+dy*dy;if(d<bd){bd=d;best=i;}}
   return best;
 }
 function landOn(w,isle){
   for(let tries=0;tries<400;tries++){
-    const x=(isle.x+(rnd(w)*2-1)*isle.r)*W,y=(isle.y+(rnd(w)*2-1)*isle.r)*W;
+    const x=(isle.x+(rnd(w)*2-1)*isle.rx)*W,y=(isle.y+(rnd(w)*2-1)*isle.ry)*W;
     if(x<5||y<5||x>=W-5||y>=W-5)continue;
     const k=cellOf(x,y),t=w.terr[k];
     if((t===GRASS||t===FOREST||t===SAND)&&w.water[k]<255)return{x,y};
@@ -927,7 +947,7 @@ function rollClimate(w){
   if(!w.climate&&t>3000){
     const r=rnd(w);
     let kind=q===1&&r<0.2?"drought":q===0&&r<0.16?"bloom":q===3&&r<0.14?"freeze":null;
-    if(kind==="freeze"&&w.rules.land==="isles")kind=null; // the sea around small islands keeps hard freezes away
+    if(kind==="freeze"&&onIsles(w))kind=null; // the sea around small islands keeps hard freezes away
     if(kind){const C=CLIMATES[kind];w.climate={kind,label:C.label,mul:C.mul,until:t+C.len,end:C.end};logEvent(w,C.start);}
   }
   if(t>6000&&w.creatures.length>150&&!w.plagueActive&&rnd(w)<0.05){
@@ -1076,7 +1096,7 @@ function step(w){
     rollClimate(w);
     // each season, a coin flip may switch which plants are poisonous
     if(rnd(w)<0.5&&w.rules.poison!==false){w.toxic=1-w.toxic;w.poisonFlips++;logEvent(w,`The ${PLANT_NAMES[w.toxic]} plants have turned poisonous, and the ${PLANT_NAMES[1-w.toxic]} ones are safe again.`);}
-    if(w.rules.land==="isles"&&w.rules.raft!==false)raft(w);
+    if(onIsles(w)&&w.rules.raft!==false)raft(w);
   }
   const sv=warmth(t);w.season=sv;
   weather(w);
@@ -1109,7 +1129,7 @@ function step(w){
   if(carn>0)w.hadCarn=true;
   // Hunters don't wash ashore on the archipelago: driftwood seldom carries them so far out, and remote
   // islands, like the Galápagos, have few predators. There hunters only evolve, or are dropped in.
-  if(w.rules.land!=="isles"&&carn===0&&t>1500&&herb>80&&t-w.lastCarnArrival>3000){
+  if(!onIsles(w)&&carn===0&&t>1500&&herb>80&&t-w.lastCarnArrival>3000){
     const sp=spawnGroup(w,"carn",5);
     w.lastCarnArrival=t;w.hadCarn=true;
     logEvent(w,`Five hunters of a new species, ${sp.name}, washed ashore on driftwood.`);
@@ -1190,8 +1210,9 @@ function startPlague(w,x,y,message){
    replay it at the same moment. Positions are rounded to whole units, live and replayed alike. */
 /* Islands a link can name: #island-42 is the usual one, #split-42 a rich island that the sea cuts in
    two after three years, where one species can become two (see tools/speciation.js), and #isles-42 an
-   archipelago of four islands settled by one species, which becomes several (tools/archipelago.js). */
-const SCENARIOS={island:{},split:{land:"two",flood:3*YEAR,rich:2},isles:{land:"isles"}};
+   archipelago of four islands settled by one species, which becomes several (tools/archipelago.js), and
+   #mixed-42 an archipelago of one great island and three small ones (tools/species-area.js). */
+const SCENARIOS={island:{},split:{land:"two",flood:3*YEAR,rich:2},isles:{land:"isles"},mixed:{land:"mixed"}};
 function scenarioOf(rules){const r=JSON.stringify(rules||{});return Object.keys(SCENARIOS).find(k=>JSON.stringify(SCENARIOS[k])===r)||null;}
 
 const TOOL_CODES={feed:"f",rain:"r",hunters:"h",meteor:"m",plague:"p"},TOOLS=Object.keys(TOOL_CODES);
@@ -1272,7 +1293,7 @@ const WORLD_SHAPE={
   sel:{births:"n",popN:"n",par:TRAITS,pop:TRAITS,sq:TRAITS},selection:orNull({"*":{s:"n",mean:"n"}}),selTrend:{"*":nums("dir n last")},
   struggle:orNull("n"),ornStart:"n",ornLogged:"b",fedLogged:"b",deathsNoKids:"n",deathsAll:"n",
   rules:v=>v===undefined||rulesOK(v)}; // files saved before rules were kept have none
-const RULE_SHAPES={genes:{"*":"n"},poison:"b",land:oneOf("two","isles"),raft:"b",flood:"i",rich:v=>Number.isFinite(v)&&v>0&&v<=10};
+const RULE_SHAPES={genes:{"*":"n"},poison:"b",land:oneOf("two","isles","mixed"),raft:"b",flood:"i",rich:v=>Number.isFinite(v)&&v>0&&v<=10};
 function rulesOK(v){return !!v&&typeof v==="object"&&!Array.isArray(v)&&Object.keys(v).every(k=>Object.hasOwn(RULE_SHAPES,k)&&fits(v[k],RULE_SHAPES[k]));}
 const CREATURE_SHAPE={id:"i",x:"n",y:"n",a:"n",gen:"n",age:"n",kids:"n",kills:"n",cool:"n",rest:"n",wait:"n",v:"n",sigA:"n",sigB:"n",mem:"n",
   sick:"n",immune:"b",dead:"b",cause:"s",sp:"i",parentId:"i",mateId:"i",e:"n",h:"n",maxAge:"n",pred:"n",pb:"n",surprise:"n",fear:"n",rBar:"n",mood:"n",
@@ -1347,7 +1368,7 @@ function deserialize(o){
   for(const k of GRIDS.slice(2))w[k].set(fromB64(o[k],N));
   for(const k of WORLD_KEYS)w[k]=o[k];
   if(!w.rules)w.rules={};
-  if(w.rules.land==="isles")balanceIsles(w);
+  if(onIsles(w))balanceIsles(w);
   route(w);
   updateWater(w);
   for(const s of o.species){s.repW=fromB64(s.repW,NI*NH+NO*NH);w.species.set(s.id,s);}
@@ -1367,7 +1388,7 @@ if (typeof module !== "undefined" && module.exports) {
     DEEP, SHALLOW, SAND, GRASS, FOREST, ROCK, SEA, SPECIES_GAP, PLAGUE_TICKS, HYDRO_EVERY, ERODE_EVERY, REST, ROOTS, FORGET,
     dsin, dcos, dexp, dlog, dpow, dtanh, act, encodeActions, decodeActions, toB64, fromB64, geneDistance, SCENARIOS, scenarioOf,
     makeWorld, step, census, assignSpecies, distTo, meteor, rain, dropHunters, startPlague, hydro, erode, reshape, isLake,
-    makeChild, spawnGroup, isleCentres, islesOf, isleAt, isleReach, ISLE_NAMES, plantNoise, rollClimate, nameFor, seasonOf, yearOf, days, cellOf, terrAt, plantAt, pairShare, serialize, deserialize, rnd, warmth,
+    makeChild, spawnGroup, isleCentres, mixedIsles, islesOf, isleAt, isleReach, ISLE_NAMES, plantNoise, rollClimate, nameFor, seasonOf, yearOf, days, cellOf, terrAt, plantAt, pairShare, serialize, deserialize, rnd, warmth,
     clamp, CALL_NAMES, PLANT_NAMES, SEL_TRAITS, plantKinds, analyzeMinds, sampleMinds, freshMind, avgLearn, avgTrait,
     analyzeSelection, recordParents, samplePopulation, freshSel, feedCreature, mateScore,
   };

@@ -734,3 +734,21 @@ test("each island of an archipelago grows about as much gold as blue, and the us
   assert.ok(Array.from(u.ptype).every((t, k) => t === (noise[k] > 0.5 ? 1 : 0)), "the usual island is split as before");
 });
 
+test("a mixed archipelago has a great island and three small ones, all real islands with sea between them", () => {
+  for (const seed of [1001, 1033]) {
+    const w = sim.makeWorld(seed, [], sim.SCENARIOS.mixed), I = sim.islesOf(w), land = [0, 0, 0, 0], gold = [0, 0, 0, 0], founders = [0, 0, 0, 0];
+    assert.deepEqual(I.map(i => i.name), ["west", "north-east", "east", "south-east"]);
+    for (let k = 0; k < sim.G * sim.G; k++) if (w.terr[k] >= sim.SAND) { const i = sim.isleAt(w, (k % sim.G + 0.5) * sim.CELL, (Math.floor(k / sim.G) + 0.5) * sim.CELL); land[i]++; if (w.ptype[k] === 0) gold[i]++; }
+    for (const c of w.creatures) { founders[sim.isleAt(w, c.x, c.y)]++; assert.notEqual(sim.terrAt(w, c.x, c.y), sim.DEEP); }
+    assert.deepEqual(founders, [30, 30, 30, 30]);
+    for (let i = 1; i < 4; i++) {
+      assert.ok(land[i] > 400, `the ${I[i].name} island is a real island (${land[i]} cells), not a rock`);
+      assert.ok(land[0] > 3 * land[i], `the great island (${land[0]} cells) is much bigger than the ${I[i].name} one (${land[i]})`);
+    }
+    for (let i = 0; i < 4; i++) assert.ok(Math.abs(gold[i] / land[i] - 0.5) < 0.2, `no island is mostly one colour, but the ${I[i].name} one is ${(gold[i] / land[i] * 100).toFixed(0)}% gold`);
+    const sea = (x, y) => sim.terrAt(w, x * sim.W, y * sim.W) === sim.DEEP;
+    for (let i = 1; i < 4; i++) assert.ok(sea(0.6, I[i].y), `open sea between the great island and the ${I[i].name} island`);
+    for (let i = 1; i < 3; i++) assert.ok(sea(0.81, I[i].y + I[i].ry + 0.05), `open sea between the ${I[i].name} and ${I[i + 1].name} islands`);
+  }
+});
+

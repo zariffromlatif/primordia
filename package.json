@@ -11,7 +11,8 @@
     "ecology": "node tools/ecology.js",
     "experiment": "node tools/experiment.js",
     "speciation": "node tools/speciation.js",
-    "archipelago": "node tools/archipelago.js"
+    "archipelago": "node tools/archipelago.js",
+    "species-area": "node tools/species-area.js"
   },
   "engines": {
     "node": ">=20"

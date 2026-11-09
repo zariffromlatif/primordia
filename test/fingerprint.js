@@ -9,6 +9,7 @@ const ISLANDS = [
   { seed: 7, rules: {}, ticks: 3000 }, // brains, eyes, seasons, rivers, mating and mutation
   { seed: 1013, rules: { land: "two", flood: 1500, rich: 2 }, ticks: 3000 }, // and two halves, a flood and a rich island
   { seed: 1003, rules: { land: "isles" }, ticks: 3000 }, // and an archipelago, with three chances of driftwood
+  { seed: 1033, rules: { land: "mixed" }, ticks: 2000 }, // and islands of very different sizes
 ];
 
 /* Runs an island and hashes everything a save would hold (FNV-1a over the saved JSON). `sim` is the
@@ -25,7 +26,8 @@ function fingerprint(sim, island) {
 const PINNED = [
   "island 7: 86 creatures on tick 3000, fingerprint 5fccbee0",
   "island 1013: 95 creatures on tick 3000, fingerprint 6625f8b2",
-  "island 1003: 275 creatures on tick 3000, fingerprint 250da1f7"
+  "island 1003: 275 creatures on tick 3000, fingerprint 250da1f7",
+  "island 1033: 48 creatures on tick 2000, fingerprint 45e8249c"
 ];
 
 module.exports = { ISLANDS, fingerprint, PINNED };

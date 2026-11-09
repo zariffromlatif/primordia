@@ -21,9 +21,9 @@ let lastTreeKey="";  // what the family tree was last drawn for
 
 /* ---------- island links ----------
    #island-12345 replays the same island, and each part like /m5000.512.300 replays something a
-   person did to it: here a meteor on tick 5000 at (512, 300). #split-12345 and #isles-12345 are the
-   same seed in the split and archipelago scenarios (see SCENARIOS in src/sim.js). */
-function readHash(){const m=/^#(island|split|isles)-(\d{1,10})((?:\/[fhmpr]\d+\.\d+\.\d+)*)$/.exec(location.hash);return m?{scenario:m[1],seed:Number(m[2]),actions:decodeActions(m[3])}:null;}
+   person did to it: here a meteor on tick 5000 at (512, 300). #split-12345, #isles-12345 and #mixed-12345
+   are the same seed in the split and the two archipelago scenarios (see SCENARIOS in src/sim.js). */
+function readHash(){const m=/^#(island|split|isles|mixed)-(\d{1,10})((?:\/[fhmpr]\d+\.\d+\.\d+)*)$/.exec(location.hash);return m?{scenario:m[1],seed:Number(m[2]),actions:decodeActions(m[3])}:null;}
 const opened=readHash();
 let seed=opened?opened.seed:(Math.random()*1e9)|0,actions=opened?opened.actions:[],replayable=true,scenario=opened?opened.scenario:"island";
 let selectedId=0,pickedSp=0,follow=false,tool="inspect",speedIx=0,running=!reduce,frame=0; // pickedSp: the species tapped to pick it, if any
@@ -583,7 +583,7 @@ function updateSpecies(){
     const hunt=sp.diet>0.5;
     return`<li><button class="lin" data-rep="${esc(sp.rep)}" data-sid="${esc(sp.id)}"><span class="sw${hunt?" tri":""}" style="background:${spColor(sp.hue,hunt)}"></span><span class="grow"><b><i>${esc(sp.name)}</i></b><small>${sp.n} alive, ${hunt?"hunters":"grazers"}, since day ${days(sp.born)}${sp.parentName?`, split from <i>${esc(sp.parentName)}</i>`:""}</small></span></button></li>`;
   }).join(""):`<li class="muted small">Nothing is alive yet.</li>`;
-  $("#extinct").textContent=extinct?`${extinct} species ${extinct===1?"has":"have"} gone extinct on this ${scenario==="isles"?"archipelago":"island"} so far.`:"No species has gone extinct yet.";
+  $("#extinct").textContent=extinct?`${extinct} species ${extinct===1?"has":"have"} gone extinct on this ${scenario==="isles"||scenario==="mixed"?"archipelago":"island"} so far.`:"No species has gone extinct yet.";
 }
 $("#species").addEventListener("click",e=>{const b=e.target.closest(".lin");if(!b)return;const id=+b.dataset.rep;if(id)select(id,+b.dataset.sid);});
 
@@ -649,7 +649,7 @@ function updateSeedLine(){
   const n=actions.length;
   $("#seedline").textContent=!replayable
     ?`This is island ${seed}, loaded from a save made before actions were recorded, so its link only replays how the island began.`
-    :`This is ${scenario==="isles"?"archipelago":"island"} ${seed}${n?` with ${n} recorded action${n===1?"":"s"}`:""}.${scenario==="split"?" It's a rich island that the sea cuts in two after three years.":scenario==="isles"?" Its four islands were all settled by one species, and driftwood now and then carries a few grazers between them.":""} Its link replays the island and its whole history${n?", including everything done to it":""}.`;
+    :`This is ${scenario==="isles"||scenario==="mixed"?"archipelago":"island"} ${seed}${n?` with ${n} recorded action${n===1?"":"s"}`:""}.${scenario==="split"?" It's a rich island that the sea cuts in two after three years.":scenario==="isles"?" Its four islands were all settled by one species, and driftwood now and then carries a few grazers between them.":scenario==="mixed"?" Its great island in the west and three small islands in the east were all settled by one species, and driftwood now and then carries a few grazers between them.":""} Its link replays the island and its whole history${n?", including everything done to it":""}.`;
 }
 
 let noticeTimer=0;
